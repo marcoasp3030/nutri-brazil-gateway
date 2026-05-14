@@ -13,6 +13,8 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as ApiPublicPricesRouteImport } from './routes/api/public/prices'
+import { Route as ApiPublicMachinesRouteImport } from './routes/api/public/machines'
+import { Route as ApiPublicLookupRouteImport } from './routes/api/public/lookup'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -33,15 +35,29 @@ const ApiPublicPricesRoute = ApiPublicPricesRouteImport.update({
   path: '/api/public/prices',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicMachinesRoute = ApiPublicMachinesRouteImport.update({
+  id: '/api/public/machines',
+  path: '/api/public/machines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicLookupRoute = ApiPublicLookupRouteImport.update({
+  id: '/api/public/lookup',
+  path: '/api/public/lookup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof LoginRoute
+  '/api/public/lookup': typeof ApiPublicLookupRoute
+  '/api/public/machines': typeof ApiPublicMachinesRoute
   '/api/public/prices': typeof ApiPublicPricesRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/': typeof AuthenticatedIndexRoute
+  '/api/public/lookup': typeof ApiPublicLookupRoute
+  '/api/public/machines': typeof ApiPublicMachinesRoute
   '/api/public/prices': typeof ApiPublicPricesRoute
 }
 export interface FileRoutesById {
@@ -49,24 +65,40 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/api/public/lookup': typeof ApiPublicLookupRoute
+  '/api/public/machines': typeof ApiPublicMachinesRoute
   '/api/public/prices': typeof ApiPublicPricesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/api/public/prices'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/api/public/lookup'
+    | '/api/public/machines'
+    | '/api/public/prices'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/' | '/api/public/prices'
+  to:
+    | '/login'
+    | '/'
+    | '/api/public/lookup'
+    | '/api/public/machines'
+    | '/api/public/prices'
   id:
     | '__root__'
     | '/_authenticated'
     | '/login'
     | '/_authenticated/'
+    | '/api/public/lookup'
+    | '/api/public/machines'
     | '/api/public/prices'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiPublicLookupRoute: typeof ApiPublicLookupRoute
+  ApiPublicMachinesRoute: typeof ApiPublicMachinesRoute
   ApiPublicPricesRoute: typeof ApiPublicPricesRoute
 }
 
@@ -100,6 +132,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicPricesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/machines': {
+      id: '/api/public/machines'
+      path: '/api/public/machines'
+      fullPath: '/api/public/machines'
+      preLoaderRoute: typeof ApiPublicMachinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/lookup': {
+      id: '/api/public/lookup'
+      path: '/api/public/lookup'
+      fullPath: '/api/public/lookup'
+      preLoaderRoute: typeof ApiPublicLookupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -118,6 +164,8 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiPublicLookupRoute: ApiPublicLookupRoute,
+  ApiPublicMachinesRoute: ApiPublicMachinesRoute,
   ApiPublicPricesRoute: ApiPublicPricesRoute,
 }
 export const routeTree = rootRouteImport
