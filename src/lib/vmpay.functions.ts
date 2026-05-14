@@ -93,7 +93,23 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
       .eq("id", data.machineId)
       .single();
     if (mErr || !machine) throw new Error("Máquina não encontrada");
-    if (!machine.installation_id) throw new Error("Máquina sem instalação no VMPay");
+
+    // Buscar installation_id ao vivo se não estiver salvo
+    let installationId = machine.installation_id as number | null;
+    if (!installationId) {
+      try {
+        const insts = await vmpayFetch(`/machines/${machine.vmpay_machine_id}/installations`);
+        const list: any[] = Array.isArray(insts) ? insts : insts?.installations ?? [];
+        const active = list.find((i) => !i.uninstalled_at && !i.ended_at) ?? list[list.length - 1];
+        if (active?.id) {
+          installationId = Number(active.id);
+          await supabase.from("machines").update({ installation_id: installationId }).eq("id", machine.id);
+        }
+      } catch {
+        // ignore, fallthrough
+      }
+      if (!installationId) throw new Error("Máquina sem instalação ativa no VMPay");
+    }
 
     // 2. Achar produto(s) pelo código de barras / upc
     const { data: products } = await supabase
