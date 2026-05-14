@@ -129,7 +129,7 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
 
     // 3. Buscar planograma ao vivo
     const planogram = await vmpayFetch(
-      `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
+      `/machines/${machine.vmpay_machine_id}/installations/${installationId}/current_planogram`,
     );
     const items: any[] = planogram?.items ?? [];
 
