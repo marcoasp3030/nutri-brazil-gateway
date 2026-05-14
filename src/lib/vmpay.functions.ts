@@ -72,6 +72,72 @@ export const listMachines = createServerFn({ method: "GET" })
     return { machines: data ?? [] };
   });
 
+// ===== Consulta AO VIVO de preço por máquina + código de barras =====
+export const lookupPriceLive = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        machineId: z.string().uuid(),
+        barcode: z.string().trim().min(3).max(50),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+
+    // 1. Achar máquina
+    const { data: machine, error: mErr } = await supabase
+      .from("machines")
+      .select("id, vmpay_machine_id, installation_id, asset_number, location_name, place")
+      .eq("id", data.machineId)
+      .single();
+    if (mErr || !machine) throw new Error("Máquina não encontrada");
+    if (!machine.installation_id) throw new Error("Máquina sem instalação no VMPay");
+
+    // 2. Achar produto(s) pelo código de barras / upc
+    const { data: products } = await supabase
+      .from("products")
+      .select("id, vmpay_good_id, name, barcode, upc_code")
+      .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`);
+
+    if (!products || products.length === 0) {
+      return {
+        found: false,
+        reason: "Código de barras não encontrado no catálogo",
+        machineLabel: machine.location_name ?? machine.place ?? machine.asset_number,
+      };
+    }
+
+    const goodIds = new Set(products.map((p: any) => Number(p.vmpay_good_id)));
+
+    // 3. Buscar planograma ao vivo
+    const planogram = await vmpayFetch(
+      `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
+    );
+    const items: any[] = planogram?.items ?? [];
+
+    // 4. Achar item com good_id correspondente
+    const match = items.find((it) => it?.good_id && goodIds.has(Number(it.good_id)));
+    const product = match
+      ? products.find((p: any) => Number(p.vmpay_good_id) === Number(match.good_id))
+      : products[0];
+
+    return {
+      found: !!match,
+      machineLabel: machine.location_name ?? machine.place ?? machine.asset_number,
+      product: product
+        ? { name: product.name, barcode: product.barcode, upc_code: product.upc_code }
+        : null,
+      price: match?.desired_price ?? null,
+      balance: match?.current_balance ?? null,
+      locator: match?.logical_locator ?? null,
+      status: match?.status ?? null,
+      reason: match ? null : "Produto não está no planograma desta máquina",
+    };
+  });
+
+
 // ===== SYNC apenas a lista de máquinas + produtos (rápido) =====
 export const syncMachineList = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
