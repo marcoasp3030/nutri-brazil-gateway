@@ -24,7 +24,7 @@ export const searchPrices = createServerFn({ method: "POST" })
   .inputValidator((input) =>
     z
       .object({
-        query: z.string().max(200).optional(),
+        query: z.string().optional().transform((v) => v?.slice(0, 200) || undefined),
         machineId: z.string().uuid().optional(),
       })
       .parse(input),
