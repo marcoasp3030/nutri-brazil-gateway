@@ -157,7 +157,7 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
       return {
         found: false,
         reason: "Código de barras não encontrado no catálogo",
-        machineLabel: machine.location_name ?? machine.place ?? machine.asset_number,
+        machineLabel: getMachineLabel(machine),
       };
     }
 
@@ -177,7 +177,7 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
 
     return {
       found: !!match,
-      machineLabel: machine.location_name ?? machine.place ?? machine.asset_number,
+      machineLabel: getMachineLabel(machine),
       product: product
         ? { name: product.name, barcode: product.barcode, upc_code: product.upc_code }
         : null,
@@ -223,7 +223,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
       }
 
       // 2. Máquinas
-      const machines = (await vmpayFetch("/machines")) as any[];
+      const machines = (await vmpayFetch("/machines?per_page=1000")) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
       // 3. Buscar clientes + locations e mapear location_id → nome do cliente
@@ -231,14 +231,12 @@ export const syncMachineList = createServerFn({ method: "POST" })
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
       try {
-        const clients = (await vmpayFetch("/clients")) as any[];
+        const clients = (await vmpayFetch("/clients?per_page=1000")) as any[];
         if (Array.isArray(clients)) {
           for (const c of clients) {
             if (c?.id != null) {
-              clientNameById.set(
-                Number(c.id),
-                c.name ?? c.corporate_name ?? `Cliente ${c.id}`,
-              );
+              const clientName = firstText(c.name, c.corporate_name, `Cliente ${c.id}`);
+              if (clientName) clientNameById.set(Number(c.id), clientName);
             }
           }
         }
@@ -246,12 +244,13 @@ export const syncMachineList = createServerFn({ method: "POST" })
         // ignore
       }
       try {
-        const locations = (await vmpayFetch("/locations")) as any[];
+        const locations = (await vmpayFetch("/locations?per_page=1000")) as any[];
         if (Array.isArray(locations)) {
           for (const l of locations) {
             if (l?.id == null) continue;
             const locId = Number(l.id);
-            if (l.name) locationNameById.set(locId, String(l.name));
+            const locationName = firstText(l.name);
+            if (locationName) locationNameById.set(locId, locationName);
             if (l.client_id != null) {
               const cname = clientNameById.get(Number(l.client_id));
               if (cname) clientNameByLocationId.set(locId, cname);
