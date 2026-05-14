@@ -92,6 +92,16 @@ function Dashboard() {
     onError: (e: any) => toast.error(`Erro: ${e?.message ?? "falha"}`),
   });
 
+  const lookupMut = useMutation({
+    mutationFn: (input: { machineId: string; barcode: string }) =>
+      lookupFn({ data: input }),
+    onSuccess: (r: any) => setLiveResult(r),
+    onError: (e: any) => {
+      setLiveResult(null);
+      toast.error(`Erro: ${e?.message ?? "falha"}`);
+    },
+  });
+
   const last = stats.data?.lastSync;
 
   return (
