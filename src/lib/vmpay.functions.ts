@@ -266,17 +266,15 @@ export const syncMachineList = createServerFn({ method: "POST" })
         .map((m) => {
           const locId = m.installation?.location_id ?? null;
           const locNum = locId != null ? Number(locId) : null;
+          const locationName = locNum != null ? locationNameById.get(locNum) ?? null : null;
+          const clientName = locNum != null ? clientNameByLocationId.get(locNum) ?? null : null;
           return {
             vmpay_machine_id: m.id,
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name:
-              locNum != null ? clientNameByLocationId.get(locNum) ?? null : null,
-            place:
-              (locNum != null ? locationNameById.get(locNum) : null) ??
-              m.installation?.place ??
-              null,
+            location_name: clientName ?? locationName,
+            place: locationName ?? firstText(m.installation?.place),
             tags: m.tags ?? null,
           };
         });
@@ -360,7 +358,7 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
       success: true,
       pricesCount: priceRows.length,
       itemsCount: items.length,
-      machineLabel: machine.location_name ?? machine.asset_number ?? "máquina",
+      machineLabel: getMachineLabel(machine),
     };
   });
 
