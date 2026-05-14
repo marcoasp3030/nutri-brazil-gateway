@@ -144,7 +144,7 @@ function Dashboard() {
         <CardHeader>
           <CardTitle>Consultar preço por código de barras</CardTitle>
           <CardDescription>
-            Selecione o cliente/máquina e informe o código de barras. O preço é buscado ao vivo no VMPay.
+            Selecione o cliente/máquina e informe o código de barras. Consulta direta no banco — resposta instantânea. Sincronize a máquina antes para gravar os preços.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
