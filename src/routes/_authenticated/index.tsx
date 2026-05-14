@@ -135,6 +135,69 @@ function Dashboard() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Consultar preço por código de barras</CardTitle>
+          <CardDescription>
+            Selecione o cliente/máquina e informe o código de barras. O preço é buscado ao vivo no VMPay.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row">
+            <Select value={liveMachineId} onValueChange={setLiveMachineId}>
+              <SelectTrigger className="md:w-72">
+                <SelectValue placeholder="Selecione um cliente / máquina" />
+              </SelectTrigger>
+              <SelectContent>
+                {machines.data?.machines.map((m: any) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {machineLabel(m)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Código de barras"
+              value={liveBarcode}
+              onChange={(e) => setLiveBarcode(e.target.value)}
+              className="flex-1"
+            />
+            <Button
+              onClick={() =>
+                liveMachineId &&
+                liveBarcode.trim() &&
+                lookupMut.mutate({ machineId: liveMachineId, barcode: liveBarcode.trim() })
+              }
+              disabled={!liveMachineId || !liveBarcode.trim() || lookupMut.isPending}
+            >
+              <Search className={`mr-2 h-4 w-4 ${lookupMut.isPending ? "animate-pulse" : ""}`} />
+              {lookupMut.isPending ? "Consultando…" : "Consultar"}
+            </Button>
+          </div>
+          {liveResult && (
+            <div className="rounded-md border p-4 text-sm">
+              <p className="text-xs text-muted-foreground">{liveResult.machineLabel}</p>
+              {liveResult.found ? (
+                <>
+                  <p className="font-medium">{liveResult.product?.name}</p>
+                  <p className="mt-1 text-2xl font-bold">
+                    {liveResult.price != null
+                      ? `R$ ${Number(liveResult.price).toFixed(2)}`
+                      : "Sem preço"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Locator: {liveResult.locator ?? "—"} · Saldo:{" "}
+                    {liveResult.balance ?? "—"} · Status: {liveResult.status ?? "—"}
+                  </p>
+                </>
+              ) : (
+                <p className="text-destructive">{liveResult.reason}</p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Testar uma máquina</CardTitle>
           <CardDescription>
             Escolha um cliente para buscar o planograma atual e gravar os preços apenas dessa máquina.
