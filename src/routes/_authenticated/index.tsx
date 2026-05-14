@@ -52,10 +52,14 @@ function Dashboard() {
   const statsFn = useServerFn(getSyncStats);
   const syncListFn = useServerFn(syncMachineList);
   const syncPlanFn = useServerFn(syncMachinePlanogram);
+  const lookupFn = useServerFn(lookupPriceLive);
 
   const [query, setQuery] = useState("");
   const [machineId, setMachineId] = useState<string>("all");
   const [testMachineId, setTestMachineId] = useState<string>("");
+  const [liveMachineId, setLiveMachineId] = useState<string>("");
+  const [liveBarcode, setLiveBarcode] = useState("");
+  const [liveResult, setLiveResult] = useState<any>(null);
 
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => statsFn() });
   const machines = useQuery({ queryKey: ["machines"], queryFn: () => machinesFn() });
