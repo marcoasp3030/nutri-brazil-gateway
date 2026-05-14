@@ -14,7 +14,171 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      machine_products: {
+        Row: {
+          created_at: string
+          current_balance: number | null
+          desired_price: number | null
+          id: string
+          logical_locator: string | null
+          machine_id: string
+          product_id: string
+          status: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_balance?: number | null
+          desired_price?: number | null
+          id?: string
+          logical_locator?: string | null
+          machine_id: string
+          product_id: string
+          status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_balance?: number | null
+          desired_price?: number | null
+          id?: string
+          logical_locator?: string | null
+          machine_id?: string
+          product_id?: string
+          status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "machine_products_machine_id_fkey"
+            columns: ["machine_id"]
+            isOneToOne: false
+            referencedRelation: "machines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "machine_products_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      machines: {
+        Row: {
+          asset_number: string | null
+          created_at: string
+          id: string
+          installation_id: number | null
+          location_id: number | null
+          place: string | null
+          tags: string[] | null
+          updated_at: string
+          vmpay_machine_id: number
+        }
+        Insert: {
+          asset_number?: string | null
+          created_at?: string
+          id?: string
+          installation_id?: number | null
+          location_id?: number | null
+          place?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          vmpay_machine_id: number
+        }
+        Update: {
+          asset_number?: string | null
+          created_at?: string
+          id?: string
+          installation_id?: number | null
+          location_id?: number | null
+          place?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          vmpay_machine_id?: number
+        }
+        Relationships: []
+      }
+      products: {
+        Row: {
+          barcode: string | null
+          category_id: number | null
+          created_at: string
+          description: string | null
+          id: string
+          manufacturer_id: number | null
+          name: string
+          tags: string[] | null
+          upc_code: string | null
+          updated_at: string
+          vmpay_good_id: number
+        }
+        Insert: {
+          barcode?: string | null
+          category_id?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          manufacturer_id?: number | null
+          name: string
+          tags?: string[] | null
+          upc_code?: string | null
+          updated_at?: string
+          vmpay_good_id: number
+        }
+        Update: {
+          barcode?: string | null
+          category_id?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          manufacturer_id?: number | null
+          name?: string
+          tags?: string[] | null
+          upc_code?: string | null
+          updated_at?: string
+          vmpay_good_id?: number
+        }
+        Relationships: []
+      }
+      sync_logs: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          machines_count: number | null
+          prices_count: number | null
+          products_count: number | null
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          machines_count?: number | null
+          prices_count?: number | null
+          products_count?: number | null
+          status: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          machines_count?: number | null
+          prices_count?: number | null
+          products_count?: number | null
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
