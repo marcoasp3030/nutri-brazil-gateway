@@ -5,6 +5,22 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const VMPAY_BASE = "https://vmpay.vertitecnologia.com.br/api/v1";
 
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function getMachineLabel(machine: any) {
+  return firstText(
+    machine?.location_name,
+    machine?.place,
+    machine?.asset_number,
+    machine?.vmpay_machine_id != null ? `Máquina ${machine.vmpay_machine_id}` : null,
+  );
+}
+
 async function vmpayFetch(path: string) {
   const apiKey = process.env.VMPAY_API_KEY;
   if (!apiKey) throw new Error("VMPAY_API_KEY não configurada");
@@ -31,6 +47,30 @@ export const searchPrices = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+    const term = data.query?.trim();
+
+    let productIds: string[] | null = null;
+    if (term) {
+      const [byName, byBarcode, byUpc] = await Promise.all([
+        supabase.from("products").select("id").ilike("name", `%${term}%`).limit(100),
+        supabase.from("products").select("id").ilike("barcode", `%${term}%`).limit(100),
+        supabase.from("products").select("id").ilike("upc_code", `%${term}%`).limit(100),
+      ]);
+
+      const productError = byName.error ?? byBarcode.error ?? byUpc.error;
+      if (productError) throw new Error(productError.message);
+
+      productIds = Array.from(
+        new Set([
+          ...(byName.data ?? []).map((p) => p.id),
+          ...(byBarcode.data ?? []).map((p) => p.id),
+          ...(byUpc.data ?? []).map((p) => p.id),
+        ]),
+      );
+
+      if (productIds.length === 0) return { items: [] };
+    }
+
     let q = supabase
       .from("machine_products")
       .select(
@@ -41,24 +81,12 @@ export const searchPrices = createServerFn({ method: "POST" })
       .limit(500);
 
     if (data.machineId) q = q.eq("machine_id", data.machineId);
+    if (productIds) q = q.in("product_id", productIds);
 
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
 
-    const term = data.query?.trim().toLowerCase();
-    const filtered = term
-      ? (rows ?? []).filter((r: any) => {
-          const p = r.product;
-          if (!p) return false;
-          return (
-            p.name?.toLowerCase().includes(term) ||
-            p.barcode?.toLowerCase().includes(term) ||
-            p.upc_code?.toLowerCase().includes(term)
-          );
-        })
-      : rows ?? [];
-
-    return { items: filtered };
+    return { items: rows ?? [] };
   });
 
 export const listMachines = createServerFn({ method: "GET" })
@@ -67,9 +95,17 @@ export const listMachines = createServerFn({ method: "GET" })
     const { data, error } = await context.supabase
       .from("machines")
       .select("id, asset_number, place, location_name, vmpay_machine_id, installation_id")
-      .order("location_name", { nullsFirst: false });
+      .order("location_name", { nullsFirst: false })
+      .order("place", { nullsFirst: false })
+      .order("asset_number", { nullsFirst: false });
     if (error) throw new Error(error.message);
-    return { machines: data ?? [] };
+    return {
+      machines: (data ?? []).map((machine) => ({
+        ...machine,
+        client_name: machine.location_name,
+        display_name: getMachineLabel(machine),
+      })),
+    };
   });
 
 // ===== Consulta AO VIVO de preço por máquina + código de barras =====
