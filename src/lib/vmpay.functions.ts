@@ -34,7 +34,7 @@ export const searchPrices = createServerFn({ method: "POST" })
     let q = supabase
       .from("machine_products")
       .select(
-        "id, desired_price, logical_locator, current_balance, status, machine:machines(id, asset_number, place), product:products(id, name, description, barcode, upc_code)",
+        "id, desired_price, logical_locator, current_balance, status, machine:machines(id, asset_number, place, location_name), product:products(id, name, description, barcode, upc_code)",
       )
       .not("desired_price", "is", null)
       .order("desired_price", { ascending: true })
