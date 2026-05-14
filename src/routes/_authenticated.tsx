@@ -39,6 +39,12 @@ function AuthLayout() {
             Nutricar Brasil — Preços
           </Link>
           <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/api-docs">
+                <BookOpen className="h-4 w-4 mr-1" />
+                API
+              </Link>
+            </Button>
             <span className="text-sm text-muted-foreground">{email}</span>
             <Button variant="ghost" size="sm" onClick={logout}>
               <LogOut className="h-4 w-4" />
