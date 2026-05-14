@@ -66,10 +66,157 @@ export const listMachines = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("machines")
-      .select("id, asset_number, place, vmpay_machine_id")
-      .order("asset_number");
+      .select("id, asset_number, place, location_name, vmpay_machine_id, installation_id")
+      .order("location_name", { nullsFirst: false });
     if (error) throw new Error(error.message);
     return { machines: data ?? [] };
+  });
+
+// ===== SYNC apenas a lista de máquinas + produtos (rápido) =====
+export const syncMachineList = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const startedAt = Date.now();
+    const userId = context.userId;
+    let machinesCount = 0;
+    let productsCount = 0;
+
+    try {
+      // 1. Catálogo de produtos
+      const products = (await vmpayFetch("/products")) as any[];
+      if (Array.isArray(products) && products.length > 0) {
+        const productRows = products
+          .filter((p) => p?.id)
+          .map((p) => ({
+            vmpay_good_id: p.id,
+            name: p.name ?? `Produto ${p.id}`,
+            description: p.description ?? null,
+            upc_code: p.upc_code ?? null,
+            barcode: p.barcode ?? null,
+            category_id: p.category_id ?? null,
+            manufacturer_id: p.manufacturer_id ?? null,
+            tags: p.tags ?? null,
+          }));
+        const { error } = await supabaseAdmin
+          .from("products")
+          .upsert(productRows, { onConflict: "vmpay_good_id" });
+        if (error) throw new Error(`upsert products: ${error.message}`);
+        productsCount = productRows.length;
+      }
+
+      // 2. Máquinas
+      const machines = (await vmpayFetch("/machines")) as any[];
+      if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
+
+      // 3. Tentar buscar nomes de clientes via /locations (se a API existir)
+      const locationNameById = new Map<number, string>();
+      try {
+        const locations = (await vmpayFetch("/locations")) as any[];
+        if (Array.isArray(locations)) {
+          for (const l of locations) {
+            if (l?.id) locationNameById.set(Number(l.id), l.name ?? l.title ?? `Cliente ${l.id}`);
+          }
+        }
+      } catch {
+        // /locations pode não existir — segue sem nome
+      }
+
+      const machineRows = machines
+        .filter((m) => m?.id)
+        .map((m) => {
+          const locId = m.installation?.location_id ?? null;
+          return {
+            vmpay_machine_id: m.id,
+            asset_number: m.asset_number ?? null,
+            installation_id: m.installation?.id ?? null,
+            location_id: locId,
+            location_name: locId != null ? locationNameById.get(Number(locId)) ?? null : null,
+            place: m.installation?.place ?? null,
+            tags: m.tags ?? null,
+          };
+        });
+
+      const { error: mErr } = await supabaseAdmin
+        .from("machines")
+        .upsert(machineRows, { onConflict: "vmpay_machine_id" });
+      if (mErr) throw new Error(`upsert machines: ${mErr.message}`);
+      machinesCount = machineRows.length;
+
+      await supabaseAdmin.from("sync_logs").insert({
+        user_id: userId,
+        status: "success",
+        machines_count: machinesCount,
+        products_count: productsCount,
+        prices_count: 0,
+        duration_ms: Date.now() - startedAt,
+      });
+
+      return { success: true, machinesCount, productsCount, durationMs: Date.now() - startedAt };
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      await supabaseAdmin.from("sync_logs").insert({
+        user_id: userId,
+        status: "error",
+        machines_count: machinesCount,
+        products_count: productsCount,
+        prices_count: 0,
+        error_message: message.slice(0, 1000),
+        duration_ms: Date.now() - startedAt,
+      });
+      throw new Error(message);
+    }
+  });
+
+// ===== SYNC planograma de UMA máquina (teste) =====
+export const syncMachinePlanogram = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ machineId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const { data: machine, error: mErr } = await supabase
+      .from("machines")
+      .select("id, vmpay_machine_id, installation_id, asset_number, location_name")
+      .eq("id", data.machineId)
+      .single();
+    if (mErr || !machine) throw new Error("Máquina não encontrada");
+    if (!machine.installation_id) throw new Error("Máquina sem instalação no VMPay");
+
+    const planogram = await vmpayFetch(
+      `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
+    );
+
+    const { data: productMap } = await supabaseAdmin
+      .from("products")
+      .select("id, vmpay_good_id");
+    const productByGoodId = new Map<number, string>();
+    productMap?.forEach((p: any) => productByGoodId.set(Number(p.vmpay_good_id), p.id));
+
+    const items: any[] = planogram?.items ?? [];
+    const priceRows = items
+      .filter((it) => it?.good_id && productByGoodId.has(Number(it.good_id)))
+      .map((it) => ({
+        machine_id: machine.id,
+        product_id: productByGoodId.get(Number(it.good_id))!,
+        desired_price: it.desired_price ?? null,
+        logical_locator: it.logical_locator != null ? String(it.logical_locator) : "0",
+        current_balance: it.current_balance ?? null,
+        status: it.status ?? null,
+      }));
+
+    // Apaga preços antigos desta máquina e insere novos
+    await supabaseAdmin.from("machine_products").delete().eq("machine_id", machine.id);
+
+    if (priceRows.length > 0) {
+      const { error: pErr } = await supabaseAdmin.from("machine_products").insert(priceRows);
+      if (pErr) throw new Error(`insert preços: ${pErr.message}`);
+    }
+
+    return {
+      success: true,
+      pricesCount: priceRows.length,
+      itemsCount: items.length,
+      machineLabel: machine.location_name ?? machine.asset_number ?? "máquina",
+    };
   });
 
 export const getSyncStats = createServerFn({ method: "GET" })
