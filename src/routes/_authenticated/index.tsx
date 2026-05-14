@@ -2,7 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { searchPrices, listMachines, getSyncStats, syncVmpay } from "@/lib/vmpay.functions";
+import {
+  searchPrices,
+  listMachines,
+  getSyncStats,
+  syncMachineList,
+  syncMachinePlanogram,
+} from "@/lib/vmpay.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Search, Package, Store, Tag } from "lucide-react";
+import { RefreshCw, Search, Package, Store, Tag, FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/")({
@@ -29,15 +35,26 @@ export const Route = createFileRoute("/_authenticated/")({
   component: Dashboard,
 });
 
+function machineLabel(m: any) {
+  return (
+    m?.location_name ||
+    m?.place ||
+    m?.asset_number ||
+    `Máquina ${m?.vmpay_machine_id ?? ""}`
+  );
+}
+
 function Dashboard() {
   const qc = useQueryClient();
   const searchFn = useServerFn(searchPrices);
   const machinesFn = useServerFn(listMachines);
   const statsFn = useServerFn(getSyncStats);
-  const syncFn = useServerFn(syncVmpay);
+  const syncListFn = useServerFn(syncMachineList);
+  const syncPlanFn = useServerFn(syncMachinePlanogram);
 
   const [query, setQuery] = useState("");
   const [machineId, setMachineId] = useState<string>("all");
+  const [testMachineId, setTestMachineId] = useState<string>("");
 
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => statsFn() });
   const machines = useQuery({ queryKey: ["machines"], queryFn: () => machinesFn() });
@@ -52,12 +69,19 @@ function Dashboard() {
       }),
   });
 
-  const syncMut = useMutation({
-    mutationFn: () => syncFn(),
+  const syncListMut = useMutation({
+    mutationFn: () => syncListFn(),
     onSuccess: (r: any) => {
-      toast.success(
-        `Sincronizado: ${r.machinesCount} máquinas, ${r.productsCount} produtos, ${r.pricesCount} preços`,
-      );
+      toast.success(`Lista atualizada: ${r.machinesCount} máquinas, ${r.productsCount} produtos`);
+      qc.invalidateQueries();
+    },
+    onError: (e: any) => toast.error(`Erro: ${e?.message ?? "falha"}`),
+  });
+
+  const syncPlanMut = useMutation({
+    mutationFn: (id: string) => syncPlanFn({ data: { machineId: id } }),
+    onSuccess: (r: any) => {
+      toast.success(`${r.machineLabel}: ${r.pricesCount} preços sincronizados`);
       qc.invalidateQueries();
     },
     onError: (e: any) => toast.error(`Erro: ${e?.message ?? "falha"}`),
@@ -84,11 +108,11 @@ function Dashboard() {
             <Button
               size="sm"
               className="mt-2 w-full"
-              onClick={() => syncMut.mutate()}
-              disabled={syncMut.isPending}
+              onClick={() => syncListMut.mutate()}
+              disabled={syncListMut.isPending}
             >
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncMut.isPending ? "animate-spin" : ""}`} />
-              {syncMut.isPending ? "Sincronizando…" : "Sincronizar VMPay"}
+              <RefreshCw className={`mr-2 h-4 w-4 ${syncListMut.isPending ? "animate-spin" : ""}`} />
+              {syncListMut.isPending ? "Atualizando…" : "Atualizar lista"}
             </Button>
           </CardContent>
         </Card>
@@ -96,9 +120,42 @@ function Dashboard() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Testar uma máquina</CardTitle>
+          <CardDescription>
+            Escolha um cliente para buscar o planograma atual e gravar os preços apenas dessa máquina.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-3 md:flex-row">
+            <Select value={testMachineId} onValueChange={setTestMachineId}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Selecione um cliente / máquina" />
+              </SelectTrigger>
+              <SelectContent>
+                {machines.data?.machines.map((m: any) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {machineLabel(m)}
+                    {m.asset_number && m.location_name ? ` · ${m.asset_number}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={() => testMachineId && syncPlanMut.mutate(testMachineId)}
+              disabled={!testMachineId || syncPlanMut.isPending}
+            >
+              <FlaskConical className={`mr-2 h-4 w-4 ${syncPlanMut.isPending ? "animate-pulse" : ""}`} />
+              {syncPlanMut.isPending ? "Buscando…" : "Sincronizar preços desta máquina"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Consulta de preços</CardTitle>
           <CardDescription>
-            Busque por nome do produto ou código de barras. Filtre por máquina se desejar.
+            Busque por nome do produto ou código de barras. Filtre pelo cliente se desejar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -113,15 +170,14 @@ function Dashboard() {
               />
             </div>
             <Select value={machineId} onValueChange={setMachineId}>
-              <SelectTrigger className="md:w-64">
-                <SelectValue placeholder="Todas as máquinas" />
+              <SelectTrigger className="md:w-72">
+                <SelectValue placeholder="Todos os clientes" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas as máquinas</SelectItem>
+                <SelectItem value="all">Todos os clientes</SelectItem>
                 {machines.data?.machines.map((m: any) => (
                   <SelectItem key={m.id} value={m.id}>
-                    {m.asset_number ?? `Máquina ${m.vmpay_machine_id}`}
-                    {m.place ? ` — ${m.place}` : ""}
+                    {machineLabel(m)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -134,7 +190,7 @@ function Dashboard() {
                 <TableRow>
                   <TableHead>Produto</TableHead>
                   <TableHead>Código de barras</TableHead>
-                  <TableHead>Máquina</TableHead>
+                  <TableHead>Cliente</TableHead>
                   <TableHead className="text-right">Preço</TableHead>
                 </TableRow>
               </TableHeader>
@@ -148,7 +204,8 @@ function Dashboard() {
                 ) : results.data?.items.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="text-center text-muted-foreground">
-                      Nenhum resultado. {stats.data?.pricesCount === 0 && "Faça uma sincronização primeiro."}
+                      Nenhum resultado.{" "}
+                      {stats.data?.pricesCount === 0 && "Sincronize uma máquina primeiro."}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -158,10 +215,7 @@ function Dashboard() {
                       <TableCell className="text-xs text-muted-foreground">
                         {r.product?.barcode ?? r.product?.upc_code ?? "—"}
                       </TableCell>
-                      <TableCell className="text-sm">
-                        {r.machine?.asset_number ?? "—"}
-                        {r.machine?.place ? ` · ${r.machine.place}` : ""}
-                      </TableCell>
+                      <TableCell className="text-sm">{machineLabel(r.machine)}</TableCell>
                       <TableCell className="text-right font-mono">
                         {r.desired_price != null
                           ? `R$ ${Number(r.desired_price).toFixed(2)}`

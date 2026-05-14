@@ -1,0 +1,1 @@
+ALTER TABLE public.machines ADD COLUMN IF NOT EXISTS location_name text;
