@@ -122,15 +122,32 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    // 1. Achar máquina
-    const { data: machine, error: mErr } = await supabase
-      .from("machines")
-      .select("id, vmpay_machine_id, installation_id, asset_number, location_name, place")
-      .eq("id", data.machineId)
-      .single();
-    if (mErr || !machine) throw new Error("Máquina não encontrada");
+    // 1. Buscar máquina + produto em paralelo
+    const [machineRes, productsRes] = await Promise.all([
+      supabase
+        .from("machines")
+        .select("id, vmpay_machine_id, installation_id, asset_number, location_name, place")
+        .eq("id", data.machineId)
+        .single(),
+      supabase
+        .from("products")
+        .select("id, vmpay_good_id, name, barcode, upc_code")
+        .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`),
+    ]);
 
-    // Buscar installation_id ao vivo se não estiver salvo
+    const machine = machineRes.data;
+    if (machineRes.error || !machine) throw new Error("Máquina não encontrada");
+
+    const products = productsRes.data;
+    if (!products || products.length === 0) {
+      return {
+        found: false,
+        reason: "Código de barras não encontrado no catálogo",
+        machineLabel: getMachineLabel(machine),
+      };
+    }
+
+    // 2. Resolver installation_id (cache no banco) e disparar planograma em paralelo
     let installationId = machine.installation_id as number | null;
     if (!installationId) {
       try {
@@ -139,26 +156,13 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
         const active = list.find((i) => !i.uninstalled_at && !i.ended_at) ?? list[list.length - 1];
         if (active?.id) {
           installationId = Number(active.id);
-          await supabase.from("machines").update({ installation_id: installationId }).eq("id", machine.id);
+          // não bloqueia a resposta — atualiza o cache em background
+          supabase.from("machines").update({ installation_id: installationId }).eq("id", machine.id).then(() => {});
         }
       } catch {
-        // ignore, fallthrough
+        // ignore
       }
       if (!installationId) throw new Error("Máquina sem instalação ativa no VMPay");
-    }
-
-    // 2. Achar produto(s) pelo código de barras / upc
-    const { data: products } = await supabase
-      .from("products")
-      .select("id, vmpay_good_id, name, barcode, upc_code")
-      .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`);
-
-    if (!products || products.length === 0) {
-      return {
-        found: false,
-        reason: "Código de barras não encontrado no catálogo",
-        machineLabel: getMachineLabel(machine),
-      };
     }
 
     const goodIds = new Set(products.map((p: any) => Number(p.vmpay_good_id)));
