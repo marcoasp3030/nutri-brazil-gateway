@@ -190,35 +190,58 @@ export const syncMachineList = createServerFn({ method: "POST" })
       const machines = (await vmpayFetch("/machines")) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
-      // 3. Buscar clientes (/clients) e mapear location_id → nome do cliente
+      // 3. Buscar clientes + locations e mapear location_id → nome do cliente
+      const clientNameById = new Map<number, string>();
       const clientNameByLocationId = new Map<number, string>();
+      const locationNameById = new Map<number, string>();
       try {
         const clients = (await vmpayFetch("/clients")) as any[];
         if (Array.isArray(clients)) {
           for (const c of clients) {
-            if (c?.main_location_id != null) {
-              clientNameByLocationId.set(
-                Number(c.main_location_id),
+            if (c?.id != null) {
+              clientNameById.set(
+                Number(c.id),
                 c.name ?? c.corporate_name ?? `Cliente ${c.id}`,
               );
             }
           }
         }
       } catch {
-        // /clients indisponível — segue sem nome
+        // ignore
+      }
+      try {
+        const locations = (await vmpayFetch("/locations")) as any[];
+        if (Array.isArray(locations)) {
+          for (const l of locations) {
+            if (l?.id == null) continue;
+            const locId = Number(l.id);
+            if (l.name) locationNameById.set(locId, String(l.name));
+            if (l.client_id != null) {
+              const cname = clientNameById.get(Number(l.client_id));
+              if (cname) clientNameByLocationId.set(locId, cname);
+            }
+          }
+        }
+      } catch {
+        // /locations indisponível — fallback para place
       }
 
       const machineRows = machines
         .filter((m) => m?.id)
         .map((m) => {
           const locId = m.installation?.location_id ?? null;
+          const locNum = locId != null ? Number(locId) : null;
           return {
             vmpay_machine_id: m.id,
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name: locId != null ? clientNameByLocationId.get(Number(locId)) ?? null : null,
-            place: m.installation?.place ?? null,
+            location_name:
+              locNum != null ? clientNameByLocationId.get(locNum) ?? null : null,
+            place:
+              (locNum != null ? locationNameById.get(locNum) : null) ??
+              m.installation?.place ??
+              null,
             tags: m.tags ?? null,
           };
         });
