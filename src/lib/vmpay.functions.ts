@@ -230,13 +230,18 @@ export const syncMachineList = createServerFn({ method: "POST" })
         .filter((m) => m?.id)
         .map((m) => {
           const locId = m.installation?.location_id ?? null;
+          const locNum = locId != null ? Number(locId) : null;
           return {
             vmpay_machine_id: m.id,
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name: locId != null ? clientNameByLocationId.get(Number(locId)) ?? null : null,
-            place: m.installation?.place ?? null,
+            location_name:
+              locNum != null ? clientNameByLocationId.get(locNum) ?? null : null,
+            place:
+              (locNum != null ? locationNameById.get(locNum) : null) ??
+              m.installation?.place ??
+              null,
             tags: m.tags ?? null,
           };
         });
