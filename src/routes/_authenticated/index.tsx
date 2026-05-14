@@ -38,11 +38,18 @@ export const Route = createFileRoute("/_authenticated/")({
 
 function machineLabel(m: any) {
   return (
+    m?.display_name ||
+    m?.client_name ||
     m?.location_name ||
     m?.place ||
     m?.asset_number ||
     `Máquina ${m?.vmpay_machine_id ?? ""}`
   );
+}
+
+function machineDetail(m: any) {
+  const detail = [m?.place, m?.asset_number].filter(Boolean).join(" · ");
+  return detail && detail !== machineLabel(m) ? detail : null;
 }
 
 function Dashboard() {
@@ -149,7 +156,7 @@ function Dashboard() {
               <SelectContent>
                 {machines.data?.machines.map((m: any) => (
                   <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}
+                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -212,8 +219,7 @@ function Dashboard() {
               <SelectContent>
                 {machines.data?.machines.map((m: any) => (
                   <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}
-                    {m.asset_number && m.location_name ? ` · ${m.asset_number}` : ""}
+                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -255,7 +261,7 @@ function Dashboard() {
                 <SelectItem value="all">Todos os clientes</SelectItem>
                 {machines.data?.machines.map((m: any) => (
                   <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}
+                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
