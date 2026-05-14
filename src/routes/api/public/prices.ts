@@ -53,7 +53,7 @@ export const Route = createFileRoute("/api/public/prices")({
           let query = supabaseAdmin
             .from("machine_products")
             .select(
-              "desired_price, logical_locator, current_balance, status, machine:machines(asset_number, place), product:products(name, description, barcode, upc_code)",
+              "desired_price, logical_locator, current_balance, status, machine:machines(asset_number, place, location_name), product:products(name, description, barcode, upc_code)",
             )
             .not("desired_price", "is", null)
             .order("desired_price", { ascending: true })
@@ -84,6 +84,7 @@ export const Route = createFileRoute("/api/public/prices")({
                 barcode: r.product?.barcode ?? r.product?.upc_code,
                 description: r.product?.description,
                 machine: r.machine?.asset_number,
+                client: r.machine?.location_name ?? r.machine?.place,
                 location: r.machine?.place,
                 price: r.desired_price != null ? Number(r.desired_price) : null,
                 balance: r.current_balance,
