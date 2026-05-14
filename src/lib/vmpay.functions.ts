@@ -108,17 +108,22 @@ export const syncMachineList = createServerFn({ method: "POST" })
       const machines = (await vmpayFetch("/machines")) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
-      // 3. Tentar buscar nomes de clientes via /locations (se a API existir)
-      const locationNameById = new Map<number, string>();
+      // 3. Buscar clientes (/clients) e mapear location_id → nome do cliente
+      const clientNameByLocationId = new Map<number, string>();
       try {
-        const locations = (await vmpayFetch("/locations")) as any[];
-        if (Array.isArray(locations)) {
-          for (const l of locations) {
-            if (l?.id) locationNameById.set(Number(l.id), l.name ?? l.title ?? `Cliente ${l.id}`);
+        const clients = (await vmpayFetch("/clients")) as any[];
+        if (Array.isArray(clients)) {
+          for (const c of clients) {
+            if (c?.main_location_id != null) {
+              clientNameByLocationId.set(
+                Number(c.main_location_id),
+                c.name ?? c.corporate_name ?? `Cliente ${c.id}`,
+              );
+            }
           }
         }
       } catch {
-        // /locations pode não existir — segue sem nome
+        // /clients indisponível — segue sem nome
       }
 
       const machineRows = machines
@@ -130,7 +135,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name: locId != null ? locationNameById.get(Number(locId)) ?? null : null,
+            location_name: locId != null ? clientNameByLocationId.get(Number(locId)) ?? null : null,
             place: m.installation?.place ?? null,
             tags: m.tags ?? null,
           };
