@@ -72,6 +72,7 @@ export type Database = {
           id: string
           installation_id: number | null
           location_id: number | null
+          location_name: string | null
           place: string | null
           tags: string[] | null
           updated_at: string
@@ -83,6 +84,7 @@ export type Database = {
           id?: string
           installation_id?: number | null
           location_id?: number | null
+          location_name?: string | null
           place?: string | null
           tags?: string[] | null
           updated_at?: string
@@ -94,6 +96,7 @@ export type Database = {
           id?: string
           installation_id?: number | null
           location_id?: number | null
+          location_name?: string | null
           place?: string | null
           tags?: string[] | null
           updated_at?: string
