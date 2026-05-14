@@ -135,7 +135,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name: locId != null ? locationNameById.get(Number(locId)) ?? null : null,
+            location_name: locId != null ? clientNameByLocationId.get(Number(locId)) ?? null : null,
             place: m.installation?.place ?? null,
             tags: m.tags ?? null,
           };
