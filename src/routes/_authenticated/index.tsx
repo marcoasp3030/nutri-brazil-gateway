@@ -8,6 +8,7 @@ import {
   getSyncStats,
   syncMachineList,
   syncMachinePlanogram,
+  lookupPriceLive,
 } from "@/lib/vmpay.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
