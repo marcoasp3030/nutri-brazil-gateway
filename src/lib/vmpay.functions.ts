@@ -122,74 +122,60 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    // 1. Buscar máquina + produto em paralelo
-    const [machineRes, productsRes] = await Promise.all([
-      supabase
+    // Consulta única no banco — JOIN entre machine_products + products + machines
+    // Filtra pela máquina e pelo barcode/upc do produto. Resposta instantânea.
+    const { data: rows, error } = await supabase
+      .from("machine_products")
+      .select(
+        "desired_price, current_balance, status, logical_locator, machine:machines!inner(id, asset_number, location_name, place), product:products!inner(name, barcode, upc_code)",
+      )
+      .eq("machine_id", data.machineId)
+      .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`, {
+        foreignTable: "products",
+      })
+      .limit(1);
+
+    if (error) throw new Error(error.message);
+
+    if (!rows || rows.length === 0) {
+      // Buscar nome da máquina para mensagem amigável
+      const { data: machine } = await supabase
         .from("machines")
-        .select("id, vmpay_machine_id, installation_id, asset_number, location_name, place")
+        .select("asset_number, location_name, place")
         .eq("id", data.machineId)
-        .single(),
-      supabase
+        .single();
+
+      // Verificar se o código existe no catálogo
+      const { data: prod } = await supabase
         .from("products")
-        .select("id, vmpay_good_id, name, barcode, upc_code")
-        .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`),
-    ]);
+        .select("id")
+        .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`)
+        .limit(1);
 
-    const machine = machineRes.data;
-    if (machineRes.error || !machine) throw new Error("Máquina não encontrada");
-
-    const products = productsRes.data;
-    if (!products || products.length === 0) {
       return {
         found: false,
-        reason: "Código de barras não encontrado no catálogo",
-        machineLabel: getMachineLabel(machine),
+        machineLabel: machine ? getMachineLabel(machine) : "",
+        reason:
+          !prod || prod.length === 0
+            ? "Código de barras não encontrado no catálogo"
+            : "Produto não está no planograma desta máquina. Sincronize os preços desta máquina.",
       };
     }
 
-    // 2. Resolver installation_id (cache no banco) e disparar planograma em paralelo
-    let installationId = machine.installation_id as number | null;
-    if (!installationId) {
-      try {
-        const insts = await vmpayFetch(`/machines/${machine.vmpay_machine_id}/installations`);
-        const list: any[] = Array.isArray(insts) ? insts : insts?.installations ?? [];
-        const active = list.find((i) => !i.uninstalled_at && !i.ended_at) ?? list[list.length - 1];
-        if (active?.id) {
-          installationId = Number(active.id);
-          // não bloqueia a resposta — atualiza o cache em background
-          supabase.from("machines").update({ installation_id: installationId }).eq("id", machine.id).then(() => {});
-        }
-      } catch {
-        // ignore
-      }
-      if (!installationId) throw new Error("Máquina sem instalação ativa no VMPay");
-    }
-
-    const goodIds = new Set(products.map((p: any) => Number(p.vmpay_good_id)));
-
-    // 3. Buscar planograma ao vivo
-    const planogram = await vmpayFetch(
-      `/machines/${machine.vmpay_machine_id}/installations/${installationId}/current_planogram`,
-    );
-    const items: any[] = planogram?.items ?? [];
-
-    // 4. Achar item com good_id correspondente
-    const match = items.find((it) => it?.good_id && goodIds.has(Number(it.good_id)));
-    const product = match
-      ? products.find((p: any) => Number(p.vmpay_good_id) === Number(match.good_id))
-      : products[0];
-
+    const row: any = rows[0];
     return {
-      found: !!match,
-      machineLabel: getMachineLabel(machine),
-      product: product
-        ? { name: product.name, barcode: product.barcode, upc_code: product.upc_code }
-        : null,
-      price: match?.desired_price ?? null,
-      balance: match?.current_balance ?? null,
-      locator: match?.logical_locator ?? null,
-      status: match?.status ?? null,
-      reason: match ? null : "Produto não está no planograma desta máquina",
+      found: true,
+      machineLabel: getMachineLabel(row.machine),
+      product: {
+        name: row.product?.name,
+        barcode: row.product?.barcode,
+        upc_code: row.product?.upc_code,
+      },
+      price: row.desired_price,
+      balance: row.current_balance,
+      locator: row.logical_locator,
+      status: row.status,
+      reason: null,
     };
   });
 
