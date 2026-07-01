@@ -101,18 +101,39 @@ async function vmpayFetch(
 
 async function vmpayFetchPaginated(basePath: string, perPage = 100, maxPages = 200, syncId?: string | null): Promise<any[]> {
   const all: any[] = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const sep = basePath.includes("?") ? "&" : "?";
-    const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
-      logEndpoint: basePath,
-      page,
-      syncId,
-    })) as any[];
-    if (!Array.isArray(batch) || batch.length === 0) break;
-    all.push(...batch);
-    if (batch.length < perPage) break;
+  const concurrency = 4;
+  const sep = basePath.includes("?") ? "&" : "?";
+  let nextPage = 1;
+  let done = false;
+  while (!done && nextPage <= maxPages) {
+    const pages = Array.from({ length: concurrency }, (_, i) => nextPage + i).filter((p) => p <= maxPages);
+    const results = await Promise.all(
+      pages.map((page) =>
+        vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
+          logEndpoint: basePath,
+          page,
+          syncId,
+        }) as Promise<any[]>,
+      ),
+    );
+    for (const batch of results) {
+      if (!Array.isArray(batch) || batch.length === 0) { done = true; continue; }
+      all.push(...batch);
+      if (batch.length < perPage) done = true;
+    }
+    nextPage += concurrency;
   }
   return all;
+}
+
+async function upsertInChunks(table: string, rows: any[], onConflict: string, chunkSize = 500) {
+  if (rows.length === 0) return;
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const slice = rows.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin.from(table).upsert(slice, { onConflict });
+    if (error) throw new Error(`upsert ${table}: ${error.message}`);
+  }
 }
 
 function buildMachineRows(
