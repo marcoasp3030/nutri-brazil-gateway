@@ -107,7 +107,7 @@ export const Route = createFileRoute("/api/public/lookup")({
               try {
                 const planogram: any = await vmpayFetch(
                   `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
-                  { logEndpoint: "/machines/:id/installations/:id/current_planogram", retries: 1, timeoutMs: 20000 },
+                  { logEndpoint: "/machines/:id/installations/:id/current_planogram", retries: 1, timeoutMs: 10000 },
                 );
                 const items: any[] = planogram?.items ?? [];
                 const goodId = prod?.[0]?.vmpay_good_id != null ? Number(prod[0].vmpay_good_id) : null;
@@ -118,6 +118,42 @@ export const Route = createFileRoute("/api/public/lookup")({
                     String(it?.upc_code ?? "") === barcode,
                 );
                 if (hit) {
+                  // Cache local: grava o planograma inteiro para as próximas consultas serem instantâneas
+                  try {
+                    const goodIds = items
+                      .map((it: any) => Number(it?.good_id))
+                      .filter((n) => Number.isFinite(n));
+                    if (goodIds.length > 0) {
+                      const { data: prods } = await supabaseAdmin
+                        .from("products")
+                        .select("id, vmpay_good_id")
+                        .in("vmpay_good_id", goodIds);
+                      const goodToId = new Map<number, string>();
+                      (prods ?? []).forEach((p: any) => goodToId.set(Number(p.vmpay_good_id), p.id));
+                      const rows = items
+                        .map((it: any) => {
+                          const pid = goodToId.get(Number(it?.good_id));
+                          if (!pid) return null;
+                          return {
+                            machine_id: machine.id,
+                            product_id: pid,
+                            desired_price: it.desired_price != null ? Number(it.desired_price) : null,
+                            current_balance: it.current_balance ?? null,
+                            logical_locator: it.logical_locator != null ? String(it.logical_locator) : null,
+                            status: it.status ?? null,
+                          };
+                        })
+                        .filter(Boolean) as any[];
+                      if (rows.length > 0) {
+                        await supabaseAdmin
+                          .from("machine_products")
+                          .upsert(rows, { onConflict: "machine_id,product_id" });
+                      }
+                    }
+                  } catch {
+                    // cache best-effort; não bloqueia a resposta
+                  }
+
                   return Response.json(
                     {
                       found: true,
