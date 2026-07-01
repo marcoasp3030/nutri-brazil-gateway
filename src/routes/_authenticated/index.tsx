@@ -148,6 +148,87 @@ function MachineCombobox({
   );
 }
 
+function MachineMultiSelect({
+  machines,
+  selected,
+  onChange,
+}: {
+  machines: any[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedSet = new Set(selected);
+  const items = useMemo(
+    () =>
+      machines.map((m) => {
+        const label = machineLabel(m);
+        const detail = machineDetail(m);
+        return {
+          machine: m,
+          label,
+          detail,
+          search: [label, detail, m?.asset_number, m?.vmpay_machine_id].filter(Boolean).join(" "),
+        };
+      }),
+    [machines],
+  );
+  const summary =
+    selected.length === 0
+      ? "Selecione um ou mais clientes / máquinas"
+      : `${selected.length} selecionada(s)`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" role="combobox" aria-expanded={open} className="flex-1 justify-between overflow-hidden">
+          <span className={cn("truncate", selected.length === 0 && "text-muted-foreground")}>{summary}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Digite para filtrar..." />
+          <div className="flex justify-between border-b px-2 py-1 text-xs">
+            <button className="text-primary hover:underline" onClick={() => onChange(items.map((i) => i.machine.id))}>
+              Selecionar todos
+            </button>
+            <button className="text-muted-foreground hover:underline" onClick={() => onChange([])}>
+              Limpar
+            </button>
+          </div>
+          <CommandList>
+            <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+            <CommandGroup>
+              {items.map(({ machine, label, detail, search }) => {
+                const checked = selectedSet.has(machine.id);
+                return (
+                  <CommandItem
+                    key={machine.id}
+                    value={search}
+                    onSelect={() => {
+                      const next = new Set(selectedSet);
+                      if (checked) next.delete(machine.id);
+                      else next.add(machine.id);
+                      onChange(Array.from(next));
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4", checked ? "opacity-100" : "opacity-0")} />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{label}</span>
+                      {detail && <span className="truncate text-xs text-muted-foreground">{detail}</span>}
+                    </span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Dashboard() {
   const qc = useQueryClient();
   const searchFn = useServerFn(searchPrices);
@@ -163,6 +244,8 @@ function Dashboard() {
   const [liveMachineId, setLiveMachineId] = useState<string>("");
   const [liveBarcode, setLiveBarcode] = useState("");
   const [liveResult, setLiveResult] = useState<any>(null);
+  const [bulkSelected, setBulkSelected] = useState<string[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current?: string } | null>(null);
 
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => statsFn() });
   const machines = useQuery({ queryKey: ["machines"], queryFn: () => machinesFn() });
@@ -319,6 +402,68 @@ function Dashboard() {
               {syncPlanMut.isPending ? "Buscando…" : "Sincronizar preços desta máquina"}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Sincronizar preços em lote</CardTitle>
+          <CardDescription>
+            Selecione quais clientes/máquinas devem ter os preços atualizados de uma vez para pré-aquecer o cache.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row">
+            <MachineMultiSelect
+              machines={machines.data?.machines ?? []}
+              selected={bulkSelected}
+              onChange={setBulkSelected}
+            />
+            <Button
+              onClick={async () => {
+                if (bulkSelected.length === 0) return;
+                setBulkProgress({ done: 0, total: bulkSelected.length });
+                let ok = 0;
+                let fail = 0;
+                for (let i = 0; i < bulkSelected.length; i++) {
+                  const id = bulkSelected[i];
+                  const m = (machines.data?.machines ?? []).find((x: any) => x.id === id);
+                  setBulkProgress({ done: i, total: bulkSelected.length, current: m ? machineLabel(m) : undefined });
+                  try {
+                    await syncPlanFn({ data: { machineId: id } });
+                    ok++;
+                  } catch (e: any) {
+                    fail++;
+                    toast.error(`${m ? machineLabel(m) : id}: ${e?.message ?? "falha"}`);
+                  }
+                }
+                setBulkProgress({ done: bulkSelected.length, total: bulkSelected.length });
+                toast.success(`Concluído: ${ok} sucesso(s), ${fail} falha(s)`);
+                qc.invalidateQueries();
+                setTimeout(() => setBulkProgress(null), 4000);
+              }}
+              disabled={bulkSelected.length === 0 || (bulkProgress != null && bulkProgress.done < bulkProgress.total)}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${bulkProgress && bulkProgress.done < bulkProgress.total ? "animate-spin" : ""}`} />
+              {bulkProgress && bulkProgress.done < bulkProgress.total
+                ? `Sincronizando ${bulkProgress.done + 1}/${bulkProgress.total}…`
+                : `Sincronizar ${bulkSelected.length || ""} selecionada(s)`}
+            </Button>
+          </div>
+          {bulkProgress && (
+            <div className="space-y-1 text-sm">
+              <div className="h-2 w-full overflow-hidden rounded bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {bulkProgress.done}/{bulkProgress.total}
+                {bulkProgress.current && bulkProgress.done < bulkProgress.total ? ` — ${bulkProgress.current}` : ""}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
