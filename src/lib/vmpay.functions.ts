@@ -11,7 +11,7 @@ function firstText(...values: unknown[]) {
   return null;
 }
 
-function getMachineLabel(machine: any) {
+export function getMachineLabel(machine: any) {
   return firstText(
     machine?.location_name,
     machine?.place,
@@ -47,7 +47,7 @@ async function logEntry(entry: {
   }
 }
 
-async function vmpayFetch(
+export async function vmpayFetch(
   path: string,
   opts: { retries?: number; timeoutMs?: number; logEndpoint?: string; page?: number | null; syncId?: string | null } = {},
 ) {
