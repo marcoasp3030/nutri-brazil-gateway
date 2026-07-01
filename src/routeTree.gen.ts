@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedSyncProgressRouteImport } from './routes/_authenticated/sync-progress'
 import { Route as AuthenticatedSyncLogsRouteImport } from './routes/_authenticated/sync-logs'
+import { Route as AuthenticatedPriceChangesRouteImport } from './routes/_authenticated/price-changes'
 import { Route as AuthenticatedApiDocsRouteImport } from './routes/_authenticated/api-docs'
 import { Route as ApiPublicPricesRouteImport } from './routes/api/public/prices'
 import { Route as ApiPublicMachinesRouteImport } from './routes/api/public/machines'
@@ -44,6 +45,12 @@ const AuthenticatedSyncLogsRoute = AuthenticatedSyncLogsRouteImport.update({
   path: '/sync-logs',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedPriceChangesRoute =
+  AuthenticatedPriceChangesRouteImport.update({
+    id: '/price-changes',
+    path: '/price-changes',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedApiDocsRoute = AuthenticatedApiDocsRouteImport.update({
   id: '/api-docs',
   path: '/api-docs',
@@ -69,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
+  '/price-changes': typeof AuthenticatedPriceChangesRoute
   '/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
@@ -78,6 +86,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
+  '/price-changes': typeof AuthenticatedPriceChangesRoute
   '/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/': typeof AuthenticatedIndexRoute
@@ -90,6 +99,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
   '/_authenticated/api-docs': typeof AuthenticatedApiDocsRoute
+  '/_authenticated/price-changes': typeof AuthenticatedPriceChangesRoute
   '/_authenticated/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/_authenticated/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
@@ -103,6 +113,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/api-docs'
+    | '/price-changes'
     | '/sync-logs'
     | '/sync-progress'
     | '/api/public/lookup'
@@ -112,6 +123,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/api-docs'
+    | '/price-changes'
     | '/sync-logs'
     | '/sync-progress'
     | '/'
@@ -123,6 +135,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/login'
     | '/_authenticated/api-docs'
+    | '/_authenticated/price-changes'
     | '/_authenticated/sync-logs'
     | '/_authenticated/sync-progress'
     | '/_authenticated/'
@@ -176,6 +189,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSyncLogsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/price-changes': {
+      id: '/_authenticated/price-changes'
+      path: '/price-changes'
+      fullPath: '/price-changes'
+      preLoaderRoute: typeof AuthenticatedPriceChangesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/api-docs': {
       id: '/_authenticated/api-docs'
       path: '/api-docs'
@@ -209,6 +229,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteChildren {
   AuthenticatedApiDocsRoute: typeof AuthenticatedApiDocsRoute
+  AuthenticatedPriceChangesRoute: typeof AuthenticatedPriceChangesRoute
   AuthenticatedSyncLogsRoute: typeof AuthenticatedSyncLogsRoute
   AuthenticatedSyncProgressRoute: typeof AuthenticatedSyncProgressRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
@@ -216,6 +237,7 @@ interface AuthenticatedRouteChildren {
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedApiDocsRoute: AuthenticatedApiDocsRoute,
+  AuthenticatedPriceChangesRoute: AuthenticatedPriceChangesRoute,
   AuthenticatedSyncLogsRoute: AuthenticatedSyncLogsRoute,
   AuthenticatedSyncProgressRoute: AuthenticatedSyncProgressRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
