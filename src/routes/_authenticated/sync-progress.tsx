@@ -107,6 +107,14 @@ function SyncProgressPage() {
                 <Stat label="Erros" value={totals.err} destructive={totals.err > 0} />
               </div>
 
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Stat label="Preços no planograma" value={run.prices_count ?? 0} />
+                <Stat label="Inseridos" value={run.prices_inserted ?? 0} />
+                <Stat label="Atualizados" value={run.prices_updated ?? 0} />
+                <Stat label="Ignorados (sem mudança)" value={run.prices_skipped ?? 0} />
+              </div>
+
+
               {run.error_message && (
                 <Alert variant={run.status === "success" ? "default" : "destructive"}>
                   <AlertTitle>{run.status === "success" ? "Avisos" : "Erro"}</AlertTitle>

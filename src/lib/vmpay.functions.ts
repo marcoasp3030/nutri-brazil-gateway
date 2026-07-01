@@ -479,6 +479,8 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { supabase } = context;
+    const startedAt = Date.now();
+
     const { data: machine, error: mErr } = await supabase
       .from("machines")
       .select("id, vmpay_machine_id, installation_id, asset_number, location_name")
@@ -487,43 +489,121 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
     if (mErr || !machine) throw new Error("Máquina não encontrada");
     if (!machine.installation_id) throw new Error("Máquina sem instalação no VMPay");
 
-    const planogram = await vmpayFetch(
-      `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
-    );
+    // Cria linha de sync para expor contadores na tela de Progresso
+    const { data: syncRow } = await supabaseAdmin
+      .from("sync_logs")
+      .insert({
+        user_id: context.userId,
+        status: "running",
+        machines_count: 1,
+        products_count: 0,
+        prices_count: 0,
+        prices_inserted: 0,
+        prices_updated: 0,
+        prices_skipped: 0,
+      })
+      .select("id")
+      .single();
+    const syncId = syncRow?.id ?? null;
 
-    const { data: productMap } = await supabaseAdmin
-      .from("products")
-      .select("id, vmpay_good_id");
-    const productByGoodId = new Map<number, string>();
-    productMap?.forEach((p: any) => productByGoodId.set(Number(p.vmpay_good_id), p.id));
+    try {
+      const planogram = await vmpayFetch(
+        `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
+        { logEndpoint: "/machines/:id/installations/:id/current_planogram", syncId },
+      );
 
-    const items: any[] = planogram?.items ?? [];
-    const priceRows = items
-      .filter((it) => it?.good_id && productByGoodId.has(Number(it.good_id)))
-      .map((it) => ({
-        machine_id: machine.id,
-        product_id: productByGoodId.get(Number(it.good_id))!,
-        desired_price: it.desired_price ?? null,
-        logical_locator: it.logical_locator != null ? String(it.logical_locator) : "0",
-        current_balance: it.current_balance ?? null,
-        status: it.status ?? null,
-      }));
+      const { data: productMap } = await supabaseAdmin
+        .from("products")
+        .select("id, vmpay_good_id");
+      const productByGoodId = new Map<number, string>();
+      productMap?.forEach((p: any) => productByGoodId.set(Number(p.vmpay_good_id), p.id));
 
-    // Apaga preços antigos desta máquina e insere novos
-    await supabaseAdmin.from("machine_products").delete().eq("machine_id", machine.id);
+      const items: any[] = planogram?.items ?? [];
+      const newRows = items
+        .filter((it) => it?.good_id && productByGoodId.has(Number(it.good_id)))
+        .map((it) => ({
+          machine_id: machine.id,
+          product_id: productByGoodId.get(Number(it.good_id))!,
+          desired_price: it.desired_price ?? null,
+          logical_locator: it.logical_locator != null ? String(it.logical_locator) : "0",
+          current_balance: it.current_balance ?? null,
+          status: it.status ?? null,
+        }));
 
-    if (priceRows.length > 0) {
-      const { error: pErr } = await supabaseAdmin.from("machine_products").insert(priceRows);
-      if (pErr) throw new Error(`insert preços: ${pErr.message}`);
+      // Compara com o que já existe para contabilizar inseridos/atualizados/ignorados
+      const { data: existingRows } = await supabaseAdmin
+        .from("machine_products")
+        .select("id, product_id, logical_locator, desired_price, current_balance, status")
+        .eq("machine_id", machine.id);
+
+      const key = (pid: string, loc: string) => `${pid}|${loc}`;
+      const existingByKey = new Map<string, any>();
+      (existingRows ?? []).forEach((r: any) =>
+        existingByKey.set(key(r.product_id, r.logical_locator ?? "0"), r),
+      );
+
+      const eq = (a: any, b: any) => (a == null && b == null) || Number(a) === Number(b);
+      let inserted = 0, updated = 0, skipped = 0;
+      const newKeys = new Set<string>();
+      for (const r of newRows) {
+        const k = key(r.product_id, r.logical_locator);
+        newKeys.add(k);
+        const prev = existingByKey.get(k);
+        if (!prev) inserted++;
+        else if (
+          !eq(prev.desired_price, r.desired_price) ||
+          !eq(prev.current_balance, r.current_balance) ||
+          (prev.status ?? null) !== (r.status ?? null)
+        ) updated++;
+        else skipped++;
+      }
+      // linhas removidas do planograma serão excluídas — não entram nos contadores
+      const removed = (existingRows ?? []).filter((r: any) => !newKeys.has(key(r.product_id, r.logical_locator ?? "0"))).length;
+
+      // Apaga preços antigos desta máquina e insere novos (mantém idempotência)
+      await supabaseAdmin.from("machine_products").delete().eq("machine_id", machine.id);
+      if (newRows.length > 0) {
+        const { error: pErr } = await supabaseAdmin.from("machine_products").insert(newRows);
+        if (pErr) throw new Error(`insert preços: ${pErr.message}`);
+      }
+
+      await (supabaseAdmin.from("sync_logs") as any)
+        .update({
+          status: "success",
+          prices_count: newRows.length,
+          prices_inserted: inserted,
+          prices_updated: updated,
+          prices_skipped: skipped,
+          error_message: removed > 0 ? `${removed} preço(s) removido(s) do planograma` : null,
+          duration_ms: Date.now() - startedAt,
+        })
+        .eq("id", syncId);
+
+      return {
+        success: true,
+        pricesCount: newRows.length,
+        itemsCount: items.length,
+        inserted,
+        updated,
+        skipped,
+        removed,
+        machineLabel: getMachineLabel(machine),
+      };
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      if (syncId) {
+        await (supabaseAdmin.from("sync_logs") as any)
+          .update({
+            status: "error",
+            error_message: message.slice(0, 1000),
+            duration_ms: Date.now() - startedAt,
+          })
+          .eq("id", syncId);
+      }
+      throw new Error(message);
     }
-
-    return {
-      success: true,
-      pricesCount: priceRows.length,
-      itemsCount: items.length,
-      machineLabel: getMachineLabel(machine),
-    };
   });
+
 
 export const getSyncStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
