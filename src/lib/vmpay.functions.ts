@@ -545,17 +545,40 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
       const eq = (a: any, b: any) => (a == null && b == null) || Number(a) === Number(b);
       let inserted = 0, updated = 0, skipped = 0;
       const newKeys = new Set<string>();
+      const changes: any[] = [];
       for (const r of newRows) {
         const k = key(r.product_id, r.logical_locator);
         newKeys.add(k);
         const prev = existingByKey.get(k);
-        if (!prev) inserted++;
-        else if (
+        if (!prev) {
+          inserted++;
+          changes.push({
+            machine_id: machine.id,
+            product_id: r.product_id,
+            logical_locator: r.logical_locator,
+            change_type: "inserted",
+            old_price: null,
+            new_price: r.desired_price,
+            sync_id: syncId,
+          });
+        } else if (
           !eq(prev.desired_price, r.desired_price) ||
           !eq(prev.current_balance, r.current_balance) ||
           (prev.status ?? null) !== (r.status ?? null)
-        ) updated++;
-        else skipped++;
+        ) {
+          updated++;
+          if (!eq(prev.desired_price, r.desired_price)) {
+            changes.push({
+              machine_id: machine.id,
+              product_id: r.product_id,
+              logical_locator: r.logical_locator,
+              change_type: "updated",
+              old_price: prev.desired_price,
+              new_price: r.desired_price,
+              sync_id: syncId,
+            });
+          }
+        } else skipped++;
       }
       // linhas removidas do planograma serão excluídas — não entram nos contadores
       const removed = (existingRows ?? []).filter((r: any) => !newKeys.has(key(r.product_id, r.logical_locator ?? "0"))).length;
@@ -566,6 +589,10 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
         const { error: pErr } = await supabaseAdmin.from("machine_products").insert(newRows);
         if (pErr) throw new Error(`insert preços: ${pErr.message}`);
       }
+      if (changes.length > 0) {
+        await supabaseAdmin.from("price_changes").insert(changes);
+      }
+
 
       await (supabaseAdmin.from("sync_logs") as any)
         .update({
