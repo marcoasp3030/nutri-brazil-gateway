@@ -273,19 +273,56 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     if (!rows || rows.length === 0) {
-      // Buscar nome da máquina para mensagem amigável
+      // Busca metadados da máquina (nome + installation_id para fallback ao vivo)
       const { data: machine } = await supabase
         .from("machines")
-        .select("asset_number, location_name, place")
+        .select("asset_number, location_name, place, vmpay_machine_id, installation_id")
         .eq("id", data.machineId)
         .single();
 
-      // Verificar se o código existe no catálogo
+      // Verifica se o código existe no catálogo local
       const { data: prod } = await supabase
         .from("products")
-        .select("id")
+        .select("id, vmpay_good_id, name, barcode, upc_code")
         .or(`barcode.eq.${data.barcode},upc_code.eq.${data.barcode}`)
         .limit(1);
+
+      // Fallback ao vivo: consulta o planograma atual direto no VMPay
+      if (machine?.vmpay_machine_id && machine?.installation_id) {
+        try {
+          const planogram: any = await vmpayFetch(
+            `/machines/${machine.vmpay_machine_id}/installations/${machine.installation_id}/current_planogram`,
+            { logEndpoint: "/machines/:id/installations/:id/current_planogram", retries: 1, timeoutMs: 20000 },
+          );
+          const items: any[] = planogram?.items ?? [];
+          const goodId = prod?.[0]?.vmpay_good_id != null ? Number(prod[0].vmpay_good_id) : null;
+          const hit = items.find(
+            (it: any) =>
+              (goodId != null && Number(it?.good_id) === goodId) ||
+              String(it?.barcode ?? "") === data.barcode ||
+              String(it?.upc_code ?? "") === data.barcode,
+          );
+          if (hit) {
+            return {
+              found: true,
+              live: true,
+              machineLabel: getMachineLabel(machine),
+              product: {
+                name: prod?.[0]?.name ?? hit.good_name ?? null,
+                barcode: prod?.[0]?.barcode ?? hit.barcode ?? data.barcode,
+                upc_code: prod?.[0]?.upc_code ?? null,
+              },
+              price: hit.desired_price ?? null,
+              balance: hit.current_balance ?? null,
+              locator: hit.logical_locator != null ? String(hit.logical_locator) : null,
+              status: hit.status ?? null,
+              reason: null,
+            };
+          }
+        } catch {
+          // segue para mensagem padrão abaixo
+        }
+      }
 
       return {
         found: false,
@@ -293,9 +330,12 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
         reason:
           !prod || prod.length === 0
             ? "Código de barras não encontrado no catálogo"
-            : "Produto não está no planograma desta máquina. Sincronize os preços desta máquina.",
+            : !machine?.installation_id
+              ? "Máquina sem instalação ativa no VMPay"
+              : "Produto não está no planograma desta máquina",
       };
     }
+
 
     const row: any = rows[0];
     return {
