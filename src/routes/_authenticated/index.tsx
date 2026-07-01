@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   searchPrices,
@@ -22,13 +22,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { RefreshCw, Search, Package, Store, Tag, FlaskConical } from "lucide-react";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+import { RefreshCw, Search, Package, Store, Tag, FlaskConical, ChevronsUpDown, Check } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/")({
@@ -48,8 +51,101 @@ function machineLabel(m: any) {
 }
 
 function machineDetail(m: any) {
-  const detail = [m?.place, m?.asset_number].filter(Boolean).join(" · ");
+  const detail = [m?.place && m.place !== m?.location_name ? m.place : null, m?.asset_number]
+    .filter(Boolean)
+    .join(" · ");
   return detail && detail !== machineLabel(m) ? detail : null;
+}
+
+function MachineCombobox({
+  machines,
+  value,
+  onChange,
+  placeholder,
+  allLabel,
+  className,
+}: {
+  machines: any[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  allLabel?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value === "all" ? null : machines.find((m) => m.id === value);
+  const selectedLabel = value === "all" ? allLabel : selected ? machineLabel(selected) : "";
+  const items = useMemo(
+    () =>
+      machines.map((m) => {
+        const label = machineLabel(m);
+        const detail = machineDetail(m);
+        return {
+          machine: m,
+          label,
+          detail,
+          search: [label, detail, m?.asset_number, m?.vmpay_machine_id].filter(Boolean).join(" "),
+        };
+      }),
+    [machines],
+  );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn("justify-between overflow-hidden", className)}
+        >
+          <span className={cn("truncate", !selectedLabel && "text-muted-foreground")}>
+            {selectedLabel || placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Digite o nome do cliente, local ou máquina..." />
+          <CommandList>
+            <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+            <CommandGroup>
+              {allLabel && (
+                <CommandItem
+                  value={allLabel}
+                  onSelect={() => {
+                    onChange("all");
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === "all" ? "opacity-100" : "opacity-0")} />
+                  {allLabel}
+                </CommandItem>
+              )}
+              {items.map(({ machine, label, detail, search }) => (
+                <CommandItem
+                  key={machine.id}
+                  value={search}
+                  onSelect={() => {
+                    onChange(machine.id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === machine.id ? "opacity-100" : "opacity-0")} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium">{label}</span>
+                    {detail && <span className="truncate text-xs text-muted-foreground">{detail}</span>}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function Dashboard() {
@@ -85,6 +181,7 @@ function Dashboard() {
     mutationFn: () => syncListFn(),
     onSuccess: (r: any) => {
       toast.success(`Lista atualizada: ${r.machinesCount} máquinas, ${r.productsCount} produtos`);
+      if (r.warnings?.length) toast.warning(`Sincronização concluída com aviso: ${r.warnings.join("; ")}`);
       qc.invalidateQueries();
     },
     onError: (e: any) => toast.error(`Erro: ${e?.message ?? "falha"}`),
@@ -149,18 +246,13 @@ function Dashboard() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-col gap-3 md:flex-row">
-            <Select value={liveMachineId} onValueChange={setLiveMachineId}>
-              <SelectTrigger className="md:w-72">
-                <SelectValue placeholder="Selecione um cliente / máquina" />
-              </SelectTrigger>
-              <SelectContent>
-                {machines.data?.machines.map((m: any) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MachineCombobox
+              machines={machines.data?.machines ?? []}
+              value={liveMachineId}
+              onChange={setLiveMachineId}
+              placeholder="Selecione um cliente / máquina"
+              className="md:w-96"
+            />
             <Input
               placeholder="Código de barras"
               value={liveBarcode}
@@ -212,18 +304,13 @@ function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3 md:flex-row">
-            <Select value={testMachineId} onValueChange={setTestMachineId}>
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Selecione um cliente / máquina" />
-              </SelectTrigger>
-              <SelectContent>
-                {machines.data?.machines.map((m: any) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MachineCombobox
+              machines={machines.data?.machines ?? []}
+              value={testMachineId}
+              onChange={setTestMachineId}
+              placeholder="Digite para localizar o cliente / máquina"
+              className="flex-1"
+            />
             <Button
               onClick={() => testMachineId && syncPlanMut.mutate(testMachineId)}
               disabled={!testMachineId || syncPlanMut.isPending}
@@ -253,19 +340,14 @@ function Dashboard() {
                 className="pl-9"
               />
             </div>
-            <Select value={machineId} onValueChange={setMachineId}>
-              <SelectTrigger className="md:w-72">
-                <SelectValue placeholder="Todos os clientes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os clientes</SelectItem>
-                {machines.data?.machines.map((m: any) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {machineLabel(m)}{machineDetail(m) ? ` · ${machineDetail(m)}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <MachineCombobox
+              machines={machines.data?.machines ?? []}
+              value={machineId}
+              onChange={setMachineId}
+              placeholder="Todos os clientes"
+              allLabel="Todos os clientes"
+              className="md:w-96"
+            />
           </div>
 
           <div className="rounded-md border">
