@@ -747,22 +747,34 @@ export const listPriceChanges = createServerFn({ method: "POST" })
     z.object({
       machineId: z.string().uuid().optional(),
       changeType: z.enum(["inserted", "updated"]).optional(),
-      limit: z.number().int().min(1).max(500).optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+      // cursor-based pagination (older-than)
+      before: z.string().datetime().optional(),
+      // incremental fetch (newer-than)
+      after: z.string().datetime().optional(),
     }).parse(input ?? {}),
   )
   .handler(async ({ data, context }) => {
+    const limit = data.limit ?? 50;
     let q = context.supabase
       .from("price_changes")
       .select(`
         id, created_at, change_type, logical_locator, old_price, new_price,
         machine:machines(id, location_name, place, asset_number, vmpay_machine_id),
         product:products(id, name, barcode, vmpay_good_id)
-      `)
+      `, { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(data.limit ?? 100);
+      .limit(limit + 1); // +1 para detectar próxima página
     if (data.machineId) q = q.eq("machine_id", data.machineId);
     if (data.changeType) q = q.eq("change_type", data.changeType);
-    const { data: rows, error } = await q;
+    if (data.before) q = q.lt("created_at", data.before);
+    if (data.after) q = q.gt("created_at", data.after);
+    const { data: rows, error, count } = await q;
     if (error) throw new Error(error.message);
-    return { changes: rows ?? [] };
+    const list = rows ?? [];
+    const hasMore = list.length > limit;
+    const changes = hasMore ? list.slice(0, limit) : list;
+    const nextCursor = hasMore ? changes[changes.length - 1]?.created_at ?? null : null;
+    return { changes, hasMore, nextCursor, total: count ?? null };
   });
+
