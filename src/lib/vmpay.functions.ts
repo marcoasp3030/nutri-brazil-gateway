@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const VMPAY_BASE = "https://vmpay.vertitecnologia.com.br/api/v1";
 
@@ -21,10 +20,8 @@ function getMachineLabel(machine: any) {
   );
 }
 
-// Contexto de sync corrente (setado no início de cada sync) para vincular logs detalhados
-let currentSyncId: string | null = null;
-
 async function logEntry(entry: {
+  syncId?: string | null;
   endpoint: string;
   page?: number | null;
   attempt: number;
@@ -34,8 +31,9 @@ async function logEntry(entry: {
   error_message?: string | null;
 }) {
   try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     await supabaseAdmin.from("sync_log_entries").insert({
-      sync_id: currentSyncId,
+      sync_id: entry.syncId ?? null,
       endpoint: entry.endpoint,
       page: entry.page ?? null,
       attempt: entry.attempt,
@@ -51,7 +49,7 @@ async function logEntry(entry: {
 
 async function vmpayFetch(
   path: string,
-  opts: { retries?: number; timeoutMs?: number; logEndpoint?: string; page?: number | null } = {},
+  opts: { retries?: number; timeoutMs?: number; logEndpoint?: string; page?: number | null; syncId?: string | null } = {},
 ) {
   const apiKey = process.env.VMPAY_API_KEY;
   if (!apiKey) throw new Error("VMPAY_API_KEY não configurada");
@@ -70,12 +68,12 @@ async function vmpayFetch(
       clearTimeout(t);
       const dur = Date.now() - start;
       if (res.ok) {
-        await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: true, duration_ms: dur });
+        await logEntry({ syncId: opts.syncId ?? null, endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: true, duration_ms: dur });
         return res.json();
       }
       const text = await res.text().catch(() => "");
       const errMsg = `HTTP ${res.status} ${text.slice(0, 200)}`;
-      await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: false, duration_ms: dur, error_message: errMsg });
+      await logEntry({ syncId: opts.syncId ?? null, endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: false, duration_ms: dur, error_message: errMsg });
       if ([408, 429, 500, 502, 503, 504, 520, 522, 524].includes(res.status) && attempt <= retries) {
         await new Promise((r) => setTimeout(r, 1000 * attempt));
         continue;
@@ -89,7 +87,7 @@ async function vmpayFetch(
       const msg = isAbort ? `timeout ${timeoutMs}ms` : e?.message ?? String(e);
       // se já logamos HTTP acima, não duplica
       if (isAbort || !(e?.message ?? "").startsWith("VMPay ")) {
-        await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, ok: false, duration_ms: dur, error_message: msg });
+        await logEntry({ syncId: opts.syncId ?? null, endpoint: endpointLabel, page: opts.page ?? null, attempt, ok: false, duration_ms: dur, error_message: msg });
       }
       if (attempt <= retries) {
         await new Promise((r) => setTimeout(r, 1000 * attempt));
@@ -101,19 +99,45 @@ async function vmpayFetch(
   throw lastErr;
 }
 
-async function vmpayFetchPaginated(basePath: string, perPage = 100, maxPages = 200): Promise<any[]> {
+async function vmpayFetchPaginated(basePath: string, perPage = 100, maxPages = 200, syncId?: string | null): Promise<any[]> {
   const all: any[] = [];
   for (let page = 1; page <= maxPages; page++) {
     const sep = basePath.includes("?") ? "&" : "?";
     const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
       logEndpoint: basePath,
       page,
+      syncId,
     })) as any[];
     if (!Array.isArray(batch) || batch.length === 0) break;
     all.push(...batch);
     if (batch.length < perPage) break;
   }
   return all;
+}
+
+function buildMachineRows(
+  machines: any[],
+  clientNameByLocationId = new Map<number, string>(),
+  locationNameById = new Map<number, string>(),
+) {
+  return machines
+    .filter((m) => m?.id)
+    .map((m) => {
+      const locId = m.installation?.location_id ?? null;
+      const locNum = locId != null ? Number(locId) : null;
+      const locationName = locNum != null ? locationNameById.get(locNum) ?? null : null;
+      const clientName = locNum != null ? clientNameByLocationId.get(locNum) ?? null : null;
+      const installationPlace = firstText(m.installation?.place);
+      return {
+        vmpay_machine_id: m.id,
+        asset_number: m.asset_number ?? null,
+        installation_id: m.installation?.id ?? null,
+        location_id: locId,
+        location_name: clientName ?? locationName ?? installationPlace,
+        place: locationName ?? installationPlace,
+        tags: m.tags ?? null,
+      };
+    });
 }
 
 
@@ -188,7 +212,12 @@ export const listMachines = createServerFn({ method: "GET" })
         ...machine,
         client_name: machine.location_name,
         display_name: getMachineLabel(machine),
-      })),
+      })).sort((a, b) =>
+        getMachineLabel(a).localeCompare(getMachineLabel(b), "pt-BR", {
+          sensitivity: "base",
+          numeric: true,
+        }),
+      ),
     };
   });
 
@@ -268,10 +297,21 @@ export const lookupPriceLive = createServerFn({ method: "POST" })
 export const syncMachineList = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const startedAt = Date.now();
     const userId = context.userId;
     let machinesCount = 0;
     let productsCount = 0;
+    const warnings: string[] = [];
+
+    await supabaseAdmin
+      .from("sync_logs")
+      .update({
+        status: "error",
+        error_message: "Sincronização anterior interrompida/expirada",
+      })
+      .eq("status", "running")
+      .lt("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
 
     // Cria a linha de sync já no início para vincular logs detalhados
     const { data: syncRow } = await supabaseAdmin
@@ -285,10 +325,20 @@ export const syncMachineList = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    currentSyncId = syncRow?.id ?? null;
+    const syncId = syncRow?.id ?? null;
 
     try {
-      const products = (await vmpayFetchPaginated("/products", 50)) as any[];
+      const machines = (await vmpayFetchPaginated("/machines", 200, 200, syncId)) as any[];
+      if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
+
+      const fallbackMachineRows = buildMachineRows(machines);
+      const { error: fallbackErr } = await supabaseAdmin
+        .from("machines")
+        .upsert(fallbackMachineRows, { onConflict: "vmpay_machine_id" });
+      if (fallbackErr) throw new Error(`upsert machines: ${fallbackErr.message}`);
+      machinesCount = fallbackMachineRows.length;
+
+      const products = (await vmpayFetchPaginated("/products", 50, 200, syncId)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
           .filter((p) => p?.id)
@@ -309,14 +359,11 @@ export const syncMachineList = createServerFn({ method: "POST" })
         productsCount = productRows.length;
       }
 
-      const machines = (await vmpayFetchPaginated("/machines", 200)) as any[];
-      if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
-
       const clientNameById = new Map<number, string>();
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
       try {
-        const clients = (await vmpayFetchPaginated("/clients", 200)) as any[];
+        const clients = (await vmpayFetchPaginated("/clients", 200, 200, syncId)) as any[];
         if (Array.isArray(clients)) {
           for (const c of clients) {
             if (c?.id != null) {
@@ -325,9 +372,11 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {}
+      } catch (e: any) {
+        warnings.push(`clientes: ${e?.message ?? String(e)}`);
+      }
       try {
-        const locations = (await vmpayFetchPaginated("/locations", 200)) as any[];
+        const locations = (await vmpayFetchPaginated("/locations", 200, 200, syncId)) as any[];
         if (Array.isArray(locations)) {
           for (const l of locations) {
             if (l?.id == null) continue;
@@ -340,26 +389,11 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {}
+      } catch (e: any) {
+        warnings.push(`locais: ${e?.message ?? String(e)}`);
+      }
 
-      const machineRows = machines
-        .filter((m) => m?.id)
-        .map((m) => {
-          const locId = m.installation?.location_id ?? null;
-          const locNum = locId != null ? Number(locId) : null;
-          const locationName = locNum != null ? locationNameById.get(locNum) ?? null : null;
-          const clientName = locNum != null ? clientNameByLocationId.get(locNum) ?? null : null;
-          const installationPlace = firstText(m.installation?.place);
-          return {
-            vmpay_machine_id: m.id,
-            asset_number: m.asset_number ?? null,
-            installation_id: m.installation?.id ?? null,
-            location_id: locId,
-            location_name: clientName ?? locationName ?? installationPlace,
-            place: locationName ?? installationPlace,
-            tags: m.tags ?? null,
-          };
-        });
+      const machineRows = buildMachineRows(machines, clientNameByLocationId, locationNameById);
 
       const { error: mErr } = await supabaseAdmin
         .from("machines")
@@ -367,22 +401,23 @@ export const syncMachineList = createServerFn({ method: "POST" })
       if (mErr) throw new Error(`upsert machines: ${mErr.message}`);
       machinesCount = machineRows.length;
 
-      if (currentSyncId) {
+      if (syncId) {
         await supabaseAdmin
           .from("sync_logs")
           .update({
             status: "success",
             machines_count: machinesCount,
             products_count: productsCount,
+            error_message: warnings.length ? warnings.join("; ").slice(0, 1000) : null,
             duration_ms: Date.now() - startedAt,
           })
-          .eq("id", currentSyncId);
+          .eq("id", syncId);
       }
 
-      return { success: true, machinesCount, productsCount, durationMs: Date.now() - startedAt };
+      return { success: true, machinesCount, productsCount, warnings, durationMs: Date.now() - startedAt };
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      if (currentSyncId) {
+      if (syncId) {
         await supabaseAdmin
           .from("sync_logs")
           .update({
@@ -392,11 +427,9 @@ export const syncMachineList = createServerFn({ method: "POST" })
             error_message: message.slice(0, 1000),
             duration_ms: Date.now() - startedAt,
           })
-          .eq("id", currentSyncId);
+          .eq("id", syncId);
       }
       throw new Error(message);
-    } finally {
-      currentSyncId = null;
     }
   });
 
@@ -406,6 +439,7 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ machineId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { supabase } = context;
     const { data: machine, error: mErr } = await supabase
       .from("machines")
