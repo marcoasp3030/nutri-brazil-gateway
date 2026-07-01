@@ -326,14 +326,35 @@ export const syncMachineList = createServerFn({ method: "POST" })
     let productsCount = 0;
     const warnings: string[] = [];
 
-    await supabaseAdmin
+    // Marca como "stalled" qualquer sync "running" cuja última requisição tenha
+    // mais de 3 minutos (worker foi morto no meio) — ou antiga (>30min sem logs).
+    const staleCutoff = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const { data: runningRuns } = await supabaseAdmin
       .from("sync_logs")
-      .update({
-        status: "error",
-        error_message: "Sincronização anterior interrompida/expirada",
-      })
-      .eq("status", "running")
-      .lt("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
+      .select("id, created_at")
+      .eq("status", "running");
+    if (runningRuns && runningRuns.length > 0) {
+      for (const r of runningRuns) {
+        const { data: lastEntry } = await supabaseAdmin
+          .from("sync_log_entries")
+          .select("created_at")
+          .eq("sync_id", r.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const lastAt = lastEntry?.created_at ?? r.created_at;
+        if (lastAt < staleCutoff) {
+          await supabaseAdmin
+            .from("sync_logs")
+            .update({
+              status: "error",
+              error_message: "Interrompida — worker expirou antes de finalizar",
+              duration_ms: Date.now() - new Date(r.created_at).getTime(),
+            })
+            .eq("id", r.id);
+        }
+      }
+    }
 
     // Cria a linha de sync já no início para vincular logs detalhados
     const { data: syncRow } = await supabaseAdmin
@@ -349,13 +370,17 @@ export const syncMachineList = createServerFn({ method: "POST" })
       .single();
     const syncId = syncRow?.id ?? null;
 
+    const updateProgress = async (patch: Record<string, any>) => {
+      if (!syncId) return;
+      await (supabaseAdmin.from("sync_logs") as any).update(patch).eq("id", syncId);
+    };
+
+
     try {
-      // Busca /machines, /products, /clients, /locations em paralelo
-      const [machinesRes, productsRes, clientsRes, locationsRes] = await Promise.allSettled([
-        vmpayFetchPaginated("/machines", 200, 200, syncId),
-        vmpayFetchPaginated("/products", 100, 200, syncId),
-        vmpayFetchPaginated("/clients", 200, 200, syncId),
-        vmpayFetchPaginated("/locations", 200, 200, syncId),
+      // Fase 1: /machines + /clients em paralelo (rápidos e essenciais)
+      const [machinesRes, clientsRes] = await Promise.allSettled([
+        vmpayFetchPaginated("/machines", 200, 50, syncId),
+        vmpayFetchPaginated("/clients", 200, 20, syncId),
       ]);
 
       if (machinesRes.status !== "fulfilled" || !Array.isArray(machinesRes.value)) {
@@ -363,13 +388,48 @@ export const syncMachineList = createServerFn({ method: "POST" })
       }
       const machines = machinesRes.value;
 
-      // Products (upsert em paralelo com o processamento de maps)
-      const productsPromise = (async () => {
-        if (productsRes.status !== "fulfilled" || !Array.isArray(productsRes.value) || productsRes.value.length === 0) {
-          if (productsRes.status === "rejected") warnings.push(`produtos: ${productsRes.reason?.message ?? String(productsRes.reason)}`);
-          return 0;
+      const clientNameById = new Map<number, string>();
+      if (clientsRes.status === "fulfilled" && Array.isArray(clientsRes.value)) {
+        for (const c of clientsRes.value) {
+          if (c?.id != null) {
+            const clientName = firstText(c.name, c.corporate_name, `Cliente ${c.id}`);
+            if (clientName) clientNameById.set(Number(c.id), clientName);
+          }
         }
-        const productRows = productsRes.value
+      } else if (clientsRes.status === "rejected") {
+        warnings.push(`clientes: ${clientsRes.reason?.message ?? String(clientsRes.reason)}`);
+      }
+
+      // Fase 2: /locations com CAP baixo (evita loop infinito). Se falhar/estourar,
+      // seguimos usando installation.place como fallback.
+      const clientNameByLocationId = new Map<number, string>();
+      const locationNameById = new Map<number, string>();
+      try {
+        const locations = await vmpayFetchPaginated("/locations", 200, 15, syncId);
+        for (const l of locations) {
+          if (l?.id == null) continue;
+          const locId = Number(l.id);
+          const locationName = firstText(l.name);
+          if (locationName) locationNameById.set(locId, locationName);
+          if (l.client_id != null) {
+            const cname = clientNameById.get(Number(l.client_id));
+            if (cname) clientNameByLocationId.set(locId, cname);
+          }
+        }
+      } catch (e: any) {
+        warnings.push(`locais (parcial): ${e?.message ?? String(e)}`);
+      }
+
+      // Upsert de máquinas imediato — mesmo se /products falhar, temos as máquinas
+      const machineRows = buildMachineRows(machines, clientNameByLocationId, locationNameById);
+      await upsertInChunks("machines", machineRows, "vmpay_machine_id", 500);
+      machinesCount = machineRows.length;
+      await updateProgress({ machines_count: machinesCount });
+
+      // Fase 3: /products (o mais pesado — pode dar 524)
+      try {
+        const products = await vmpayFetchPaginated("/products", 50, 200, syncId);
+        const productRows = products
           .filter((p: any) => p?.id)
           .map((p: any) => ({
             vmpay_good_id: p.id,
@@ -382,78 +442,34 @@ export const syncMachineList = createServerFn({ method: "POST" })
             tags: p.tags ?? null,
           }));
         await upsertInChunks("products", productRows, "vmpay_good_id", 500);
-        return productRows.length;
-      })();
-
-      // Monta mapas de clientes/locais
-      const clientNameById = new Map<number, string>();
-      const clientNameByLocationId = new Map<number, string>();
-      const locationNameById = new Map<number, string>();
-      if (clientsRes.status === "fulfilled" && Array.isArray(clientsRes.value)) {
-        for (const c of clientsRes.value) {
-          if (c?.id != null) {
-            const clientName = firstText(c.name, c.corporate_name, `Cliente ${c.id}`);
-            if (clientName) clientNameById.set(Number(c.id), clientName);
-          }
-        }
-      } else if (clientsRes.status === "rejected") {
-        warnings.push(`clientes: ${clientsRes.reason?.message ?? String(clientsRes.reason)}`);
-      }
-      if (locationsRes.status === "fulfilled" && Array.isArray(locationsRes.value)) {
-        for (const l of locationsRes.value) {
-          if (l?.id == null) continue;
-          const locId = Number(l.id);
-          const locationName = firstText(l.name);
-          if (locationName) locationNameById.set(locId, locationName);
-          if (l.client_id != null) {
-            const cname = clientNameById.get(Number(l.client_id));
-            if (cname) clientNameByLocationId.set(locId, cname);
-          }
-        }
-      } else if (locationsRes.status === "rejected") {
-        warnings.push(`locais: ${locationsRes.reason?.message ?? String(locationsRes.reason)}`);
+        productsCount = productRows.length;
+        await updateProgress({ products_count: productsCount });
+      } catch (e: any) {
+        warnings.push(`produtos: ${e?.message ?? String(e)}`);
       }
 
-      // Upsert único de machines já com os nomes resolvidos
-      const machineRows = buildMachineRows(machines, clientNameByLocationId, locationNameById);
-      const machinesPromise = upsertInChunks("machines", machineRows, "vmpay_machine_id", 500);
-
-      const [productsCountResolved] = await Promise.all([productsPromise, machinesPromise]);
-      productsCount = productsCountResolved;
-      machinesCount = machineRows.length;
-
-
-      if (syncId) {
-        await supabaseAdmin
-          .from("sync_logs")
-          .update({
-            status: "success",
-            machines_count: machinesCount,
-            products_count: productsCount,
-            error_message: warnings.length ? warnings.join("; ").slice(0, 1000) : null,
-            duration_ms: Date.now() - startedAt,
-          })
-          .eq("id", syncId);
-      }
+      await updateProgress({
+        status: "success",
+        machines_count: machinesCount,
+        products_count: productsCount,
+        error_message: warnings.length ? warnings.join("; ").slice(0, 1000) : null,
+        duration_ms: Date.now() - startedAt,
+      });
 
       return { success: true, machinesCount, productsCount, warnings, durationMs: Date.now() - startedAt };
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      if (syncId) {
-        await supabaseAdmin
-          .from("sync_logs")
-          .update({
-            status: "error",
-            machines_count: machinesCount,
-            products_count: productsCount,
-            error_message: message.slice(0, 1000),
-            duration_ms: Date.now() - startedAt,
-          })
-          .eq("id", syncId);
-      }
+      await updateProgress({
+        status: "error",
+        machines_count: machinesCount,
+        products_count: productsCount,
+        error_message: message.slice(0, 1000),
+        duration_ms: Date.now() - startedAt,
+      });
       throw new Error(message);
     }
   });
+
 
 
 // ===== SYNC planograma de UMA máquina (teste) =====
@@ -542,6 +558,61 @@ export const listSyncRuns = createServerFn({ method: "GET" })
       .limit(30);
     if (error) throw new Error(error.message);
     return { runs: data ?? [] };
+  });
+
+export const getSyncProgress = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ syncId: z.string().uuid().optional() }).parse(input ?? {}))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    let run: any = null;
+    if (data.syncId) {
+      const { data: r } = await supabase.from("sync_logs").select("*").eq("id", data.syncId).maybeSingle();
+      run = r;
+    } else {
+      const { data: r } = await supabase.from("sync_logs").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
+      run = r;
+    }
+    if (!run) return { run: null, stats: [], stale: false, lastEntryAt: null };
+
+    const { data: entries } = await supabase
+      .from("sync_log_entries")
+      .select("endpoint, page, ok, duration_ms, status_code, error_message, created_at")
+      .eq("sync_id", run.id)
+      .order("created_at", { ascending: false })
+      .limit(2000);
+
+    const byEndpoint = new Map<string, { endpoint: string; requests: number; ok: number; errors: number; pages: Set<number>; totalMs: number; maxMs: number; lastError: string | null; lastAt: string | null }>();
+    let lastEntryAt: string | null = null;
+    for (const e of entries ?? []) {
+      if (!lastEntryAt || (e.created_at && e.created_at > lastEntryAt)) lastEntryAt = e.created_at;
+      const s = byEndpoint.get(e.endpoint) ?? { endpoint: e.endpoint, requests: 0, ok: 0, errors: 0, pages: new Set<number>(), totalMs: 0, maxMs: 0, lastError: null, lastAt: null };
+      s.requests += 1;
+      if (e.ok) s.ok += 1; else { s.errors += 1; if (!s.lastError && e.error_message) s.lastError = e.error_message; }
+      if (e.page != null) s.pages.add(e.page);
+      s.totalMs += e.duration_ms ?? 0;
+      s.maxMs = Math.max(s.maxMs, e.duration_ms ?? 0);
+      if (!s.lastAt || (e.created_at && e.created_at > s.lastAt)) s.lastAt = e.created_at;
+      byEndpoint.set(e.endpoint, s);
+    }
+
+    const stats = Array.from(byEndpoint.values()).map((s) => ({
+      endpoint: s.endpoint,
+      requests: s.requests,
+      ok: s.ok,
+      errors: s.errors,
+      pages_count: s.pages.size,
+      max_page: s.pages.size ? Math.max(...s.pages) : null,
+      avg_ms: s.requests ? Math.round(s.totalMs / s.requests) : 0,
+      max_ms: s.maxMs,
+      last_error: s.lastError,
+      last_at: s.lastAt,
+    })).sort((a, b) => a.endpoint.localeCompare(b.endpoint));
+
+    // Considera "stale" se está "running" e sem novos logs há > 90s
+    const stale = run.status === "running" && lastEntryAt != null && (Date.now() - new Date(lastEntryAt).getTime()) > 90_000;
+
+    return { run, stats, stale, lastEntryAt };
   });
 
 export const listSyncEntries = createServerFn({ method: "POST" })
