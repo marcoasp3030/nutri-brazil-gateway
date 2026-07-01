@@ -51,6 +51,12 @@ function AuthLayout() {
                 Logs
               </Link>
             </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/price-changes">
+                <History className="h-4 w-4 mr-1" />
+                Alterações
+              </Link>
+            </Button>
 
             <Button variant="ghost" size="sm" asChild>
               <Link to="/api-docs">
