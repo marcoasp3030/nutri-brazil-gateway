@@ -21,18 +21,53 @@ function getMachineLabel(machine: any) {
   );
 }
 
-async function vmpayFetch(path: string) {
+async function vmpayFetch(path: string, opts: { retries?: number; timeoutMs?: number } = {}) {
   const apiKey = process.env.VMPAY_API_KEY;
   if (!apiKey) throw new Error("VMPAY_API_KEY não configurada");
   const sep = path.includes("?") ? "&" : "?";
   const url = `${VMPAY_BASE}${path}${sep}access_token=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`VMPay ${path} → ${res.status} ${text.slice(0, 200)}`);
+  const retries = opts.retries ?? 3;
+  const timeoutMs = opts.timeoutMs ?? 60000;
+  let lastErr: any;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) return res.json();
+      // Retry on gateway/timeouts
+      if ([408, 429, 500, 502, 503, 504, 520, 522, 524].includes(res.status) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      const text = await res.text().catch(() => "");
+      throw new Error(`VMPay ${path} → ${res.status} ${text.slice(0, 200)}`);
+    } catch (e: any) {
+      clearTimeout(t);
+      lastErr = e;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
   }
-  return res.json();
+  throw lastErr;
 }
+
+async function vmpayFetchPaginated(basePath: string, perPage = 200): Promise<any[]> {
+  const all: any[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const sep = basePath.includes("?") ? "&" : "?";
+    const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`)) as any[];
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    all.push(...batch);
+    if (batch.length < perPage) break;
+  }
+  return all;
+}
+
 
 // ===== SEARCH (autenticado) =====
 export const searchPrices = createServerFn({ method: "POST" })
@@ -191,7 +226,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
 
     try {
       // 1. Catálogo de produtos
-      const products = (await vmpayFetch("/products")) as any[];
+      const products = (await vmpayFetchPaginated("/products", 200)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
           .filter((p) => p?.id)
@@ -213,7 +248,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
       }
 
       // 2. Máquinas
-      const machines = (await vmpayFetch("/machines?per_page=1000")) as any[];
+      const machines = (await vmpayFetchPaginated("/machines", 200)) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
       // 3. Buscar clientes + locations e mapear location_id → nome do cliente
@@ -221,7 +256,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
       try {
-        const clients = (await vmpayFetch("/clients?per_page=1000")) as any[];
+        const clients = (await vmpayFetchPaginated("/clients", 200)) as any[];
         if (Array.isArray(clients)) {
           for (const c of clients) {
             if (c?.id != null) {
@@ -234,7 +269,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
         // ignore
       }
       try {
-        const locations = (await vmpayFetch("/locations?per_page=1000")) as any[];
+        const locations = (await vmpayFetchPaginated("/locations", 200)) as any[];
         if (Array.isArray(locations)) {
           for (const l of locations) {
             if (l?.id == null) continue;
