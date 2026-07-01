@@ -244,6 +244,8 @@ function Dashboard() {
   const [liveMachineId, setLiveMachineId] = useState<string>("");
   const [liveBarcode, setLiveBarcode] = useState("");
   const [liveResult, setLiveResult] = useState<any>(null);
+  const [bulkSelected, setBulkSelected] = useState<string[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current?: string } | null>(null);
 
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => statsFn() });
   const machines = useQuery({ queryKey: ["machines"], queryFn: () => machinesFn() });
