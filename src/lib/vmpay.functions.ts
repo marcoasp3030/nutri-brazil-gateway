@@ -740,3 +740,29 @@ export const listSyncEntries = createServerFn({ method: "POST" })
   });
 
 
+
+export const listPriceChanges = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({
+      machineId: z.string().uuid().optional(),
+      changeType: z.enum(["inserted", "updated"]).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    }).parse(input ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    let q = context.supabase
+      .from("price_changes")
+      .select(`
+        id, created_at, change_type, logical_locator, old_price, new_price,
+        machine:machines(id, location_name, place, asset_number, vmpay_machine_id),
+        product:products(id, name, barcode, vmpay_good_id)
+      `)
+      .order("created_at", { ascending: false })
+      .limit(data.limit ?? 100);
+    if (data.machineId) q = q.eq("machine_id", data.machineId);
+    if (data.changeType) q = q.eq("change_type", data.changeType);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    return { changes: rows ?? [] };
+  });
