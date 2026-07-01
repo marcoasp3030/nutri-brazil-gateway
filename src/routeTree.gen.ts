@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedSyncLogsRouteImport } from './routes/_authenticated/sync-logs'
 import { Route as AuthenticatedApiDocsRouteImport } from './routes/_authenticated/api-docs'
 import { Route as ApiPublicPricesRouteImport } from './routes/api/public/prices'
 import { Route as ApiPublicMachinesRouteImport } from './routes/api/public/machines'
@@ -29,6 +30,11 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSyncLogsRoute = AuthenticatedSyncLogsRouteImport.update({
+  id: '/sync-logs',
+  path: '/sync-logs',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedApiDocsRoute = AuthenticatedApiDocsRouteImport.update({
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
+  '/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
   '/api/public/prices': typeof ApiPublicPricesRoute
@@ -63,6 +70,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
+  '/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/': typeof AuthenticatedIndexRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
@@ -73,6 +81,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
   '/_authenticated/api-docs': typeof AuthenticatedApiDocsRoute
+  '/_authenticated/sync-logs': typeof AuthenticatedSyncLogsRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/api-docs'
+    | '/sync-logs'
     | '/api/public/lookup'
     | '/api/public/machines'
     | '/api/public/prices'
@@ -91,6 +101,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/api-docs'
+    | '/sync-logs'
     | '/'
     | '/api/public/lookup'
     | '/api/public/machines'
@@ -100,6 +111,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/login'
     | '/_authenticated/api-docs'
+    | '/_authenticated/sync-logs'
     | '/_authenticated/'
     | '/api/public/lookup'
     | '/api/public/machines'
@@ -137,6 +149,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/sync-logs': {
+      id: '/_authenticated/sync-logs'
+      path: '/sync-logs'
+      fullPath: '/sync-logs'
+      preLoaderRoute: typeof AuthenticatedSyncLogsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/api-docs': {
       id: '/_authenticated/api-docs'
       path: '/api-docs'
@@ -170,11 +189,13 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteChildren {
   AuthenticatedApiDocsRoute: typeof AuthenticatedApiDocsRoute
+  AuthenticatedSyncLogsRoute: typeof AuthenticatedSyncLogsRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedApiDocsRoute: AuthenticatedApiDocsRoute,
+  AuthenticatedSyncLogsRoute: AuthenticatedSyncLogsRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
 }
 
