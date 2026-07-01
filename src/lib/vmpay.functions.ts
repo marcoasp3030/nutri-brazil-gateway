@@ -131,7 +131,7 @@ async function upsertInChunks(table: string, rows: any[], onConflict: string, ch
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   for (let i = 0; i < rows.length; i += chunkSize) {
     const slice = rows.slice(i, i + chunkSize);
-    const { error } = await supabaseAdmin.from(table).upsert(slice, { onConflict });
+    const { error } = await (supabaseAdmin.from(table as any) as any).upsert(slice, { onConflict });
     if (error) throw new Error(`upsert ${table}: ${error.message}`);
   }
 }
