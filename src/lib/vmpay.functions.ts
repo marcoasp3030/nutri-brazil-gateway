@@ -101,18 +101,39 @@ async function vmpayFetch(
 
 async function vmpayFetchPaginated(basePath: string, perPage = 100, maxPages = 200, syncId?: string | null): Promise<any[]> {
   const all: any[] = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const sep = basePath.includes("?") ? "&" : "?";
-    const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
-      logEndpoint: basePath,
-      page,
-      syncId,
-    })) as any[];
-    if (!Array.isArray(batch) || batch.length === 0) break;
-    all.push(...batch);
-    if (batch.length < perPage) break;
+  const concurrency = 4;
+  const sep = basePath.includes("?") ? "&" : "?";
+  let nextPage = 1;
+  let done = false;
+  while (!done && nextPage <= maxPages) {
+    const pages = Array.from({ length: concurrency }, (_, i) => nextPage + i).filter((p) => p <= maxPages);
+    const results = await Promise.all(
+      pages.map((page) =>
+        vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
+          logEndpoint: basePath,
+          page,
+          syncId,
+        }) as Promise<any[]>,
+      ),
+    );
+    for (const batch of results) {
+      if (!Array.isArray(batch) || batch.length === 0) { done = true; continue; }
+      all.push(...batch);
+      if (batch.length < perPage) done = true;
+    }
+    nextPage += concurrency;
   }
   return all;
+}
+
+async function upsertInChunks(table: string, rows: any[], onConflict: string, chunkSize = 500) {
+  if (rows.length === 0) return;
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const slice = rows.slice(i, i + chunkSize);
+    const { error } = await (supabaseAdmin.from(table as any) as any).upsert(slice, { onConflict });
+    if (error) throw new Error(`upsert ${table}: ${error.message}`);
+  }
 }
 
 function buildMachineRows(
@@ -329,21 +350,28 @@ export const syncMachineList = createServerFn({ method: "POST" })
     const syncId = syncRow?.id ?? null;
 
     try {
-      const machines = (await vmpayFetchPaginated("/machines", 200, 200, syncId)) as any[];
-      if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
+      // Busca /machines, /products, /clients, /locations em paralelo
+      const [machinesRes, productsRes, clientsRes, locationsRes] = await Promise.allSettled([
+        vmpayFetchPaginated("/machines", 200, 200, syncId),
+        vmpayFetchPaginated("/products", 100, 200, syncId),
+        vmpayFetchPaginated("/clients", 200, 200, syncId),
+        vmpayFetchPaginated("/locations", 200, 200, syncId),
+      ]);
 
-      const fallbackMachineRows = buildMachineRows(machines);
-      const { error: fallbackErr } = await supabaseAdmin
-        .from("machines")
-        .upsert(fallbackMachineRows, { onConflict: "vmpay_machine_id" });
-      if (fallbackErr) throw new Error(`upsert machines: ${fallbackErr.message}`);
-      machinesCount = fallbackMachineRows.length;
+      if (machinesRes.status !== "fulfilled" || !Array.isArray(machinesRes.value)) {
+        throw new Error(`/machines falhou: ${machinesRes.status === "rejected" ? machinesRes.reason?.message : "retorno inválido"}`);
+      }
+      const machines = machinesRes.value;
 
-      const products = (await vmpayFetchPaginated("/products", 50, 200, syncId)) as any[];
-      if (Array.isArray(products) && products.length > 0) {
-        const productRows = products
-          .filter((p) => p?.id)
-          .map((p) => ({
+      // Products (upsert em paralelo com o processamento de maps)
+      const productsPromise = (async () => {
+        if (productsRes.status !== "fulfilled" || !Array.isArray(productsRes.value) || productsRes.value.length === 0) {
+          if (productsRes.status === "rejected") warnings.push(`produtos: ${productsRes.reason?.message ?? String(productsRes.reason)}`);
+          return 0;
+        }
+        const productRows = productsRes.value
+          .filter((p: any) => p?.id)
+          .map((p: any) => ({
             vmpay_good_id: p.id,
             name: p.name ?? `Produto ${p.id}`,
             description: p.description ?? null,
@@ -353,54 +381,47 @@ export const syncMachineList = createServerFn({ method: "POST" })
             manufacturer_id: p.manufacturer_id ?? null,
             tags: p.tags ?? null,
           }));
-        const { error } = await supabaseAdmin
-          .from("products")
-          .upsert(productRows, { onConflict: "vmpay_good_id" });
-        if (error) throw new Error(`upsert products: ${error.message}`);
-        productsCount = productRows.length;
-      }
+        await upsertInChunks("products", productRows, "vmpay_good_id", 500);
+        return productRows.length;
+      })();
 
+      // Monta mapas de clientes/locais
       const clientNameById = new Map<number, string>();
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
-      try {
-        const clients = (await vmpayFetchPaginated("/clients", 200, 200, syncId)) as any[];
-        if (Array.isArray(clients)) {
-          for (const c of clients) {
-            if (c?.id != null) {
-              const clientName = firstText(c.name, c.corporate_name, `Cliente ${c.id}`);
-              if (clientName) clientNameById.set(Number(c.id), clientName);
-            }
+      if (clientsRes.status === "fulfilled" && Array.isArray(clientsRes.value)) {
+        for (const c of clientsRes.value) {
+          if (c?.id != null) {
+            const clientName = firstText(c.name, c.corporate_name, `Cliente ${c.id}`);
+            if (clientName) clientNameById.set(Number(c.id), clientName);
           }
         }
-      } catch (e: any) {
-        warnings.push(`clientes: ${e?.message ?? String(e)}`);
+      } else if (clientsRes.status === "rejected") {
+        warnings.push(`clientes: ${clientsRes.reason?.message ?? String(clientsRes.reason)}`);
       }
-      try {
-        const locations = (await vmpayFetchPaginated("/locations", 200, 200, syncId)) as any[];
-        if (Array.isArray(locations)) {
-          for (const l of locations) {
-            if (l?.id == null) continue;
-            const locId = Number(l.id);
-            const locationName = firstText(l.name);
-            if (locationName) locationNameById.set(locId, locationName);
-            if (l.client_id != null) {
-              const cname = clientNameById.get(Number(l.client_id));
-              if (cname) clientNameByLocationId.set(locId, cname);
-            }
+      if (locationsRes.status === "fulfilled" && Array.isArray(locationsRes.value)) {
+        for (const l of locationsRes.value) {
+          if (l?.id == null) continue;
+          const locId = Number(l.id);
+          const locationName = firstText(l.name);
+          if (locationName) locationNameById.set(locId, locationName);
+          if (l.client_id != null) {
+            const cname = clientNameById.get(Number(l.client_id));
+            if (cname) clientNameByLocationId.set(locId, cname);
           }
         }
-      } catch (e: any) {
-        warnings.push(`locais: ${e?.message ?? String(e)}`);
+      } else if (locationsRes.status === "rejected") {
+        warnings.push(`locais: ${locationsRes.reason?.message ?? String(locationsRes.reason)}`);
       }
 
+      // Upsert único de machines já com os nomes resolvidos
       const machineRows = buildMachineRows(machines, clientNameByLocationId, locationNameById);
+      const machinesPromise = upsertInChunks("machines", machineRows, "vmpay_machine_id", 500);
 
-      const { error: mErr } = await supabaseAdmin
-        .from("machines")
-        .upsert(machineRows, { onConflict: "vmpay_machine_id" });
-      if (mErr) throw new Error(`upsert machines: ${mErr.message}`);
+      const [productsCountResolved] = await Promise.all([productsPromise, machinesPromise]);
+      productsCount = productsCountResolved;
       machinesCount = machineRows.length;
+
 
       if (syncId) {
         await supabaseAdmin
