@@ -17,7 +17,7 @@ function getMachineLabel(machine: any) {
     machine?.place,
     machine?.asset_number,
     machine?.vmpay_machine_id != null ? `Máquina ${machine.vmpay_machine_id}` : null,
-  );
+  ) ?? "Máquina sem identificação";
 }
 
 async function logEntry(entry: {
