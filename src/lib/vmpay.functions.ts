@@ -248,7 +248,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
       }
 
       // 2. Máquinas
-      const machines = (await vmpayFetch("/machines?per_page=1000")) as any[];
+      const machines = (await vmpayFetchPaginated("/machines", 200)) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
       // 3. Buscar clientes + locations e mapear location_id → nome do cliente
