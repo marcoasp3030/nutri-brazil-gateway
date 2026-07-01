@@ -269,7 +269,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
         // ignore
       }
       try {
-        const locations = (await vmpayFetch("/locations?per_page=1000")) as any[];
+        const locations = (await vmpayFetchPaginated("/locations", 200)) as any[];
         if (Array.isArray(locations)) {
           for (const l of locations) {
             if (l?.id == null) continue;
