@@ -288,7 +288,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
     currentSyncId = syncRow?.id ?? null;
 
     try {
-      const products = (await vmpayFetchPaginated("/products", 200)) as any[];
+      const products = (await vmpayFetchPaginated("/products", 50)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
           .filter((p) => p?.id)
