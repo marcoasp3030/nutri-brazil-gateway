@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedSyncProgressRouteImport } from './routes/_authenticated/sync-progress'
 import { Route as AuthenticatedSyncLogsRouteImport } from './routes/_authenticated/sync-logs'
 import { Route as AuthenticatedApiDocsRouteImport } from './routes/_authenticated/api-docs'
 import { Route as ApiPublicPricesRouteImport } from './routes/api/public/prices'
@@ -32,6 +33,12 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedSyncProgressRoute =
+  AuthenticatedSyncProgressRouteImport.update({
+    id: '/sync-progress',
+    path: '/sync-progress',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedSyncLogsRoute = AuthenticatedSyncLogsRouteImport.update({
   id: '/sync-logs',
   path: '/sync-logs',
@@ -63,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
   '/sync-logs': typeof AuthenticatedSyncLogsRoute
+  '/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
   '/api/public/prices': typeof ApiPublicPricesRoute
@@ -71,6 +79,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/api-docs': typeof AuthenticatedApiDocsRoute
   '/sync-logs': typeof AuthenticatedSyncLogsRoute
+  '/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/': typeof AuthenticatedIndexRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
@@ -82,6 +91,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authenticated/api-docs': typeof AuthenticatedApiDocsRoute
   '/_authenticated/sync-logs': typeof AuthenticatedSyncLogsRoute
+  '/_authenticated/sync-progress': typeof AuthenticatedSyncProgressRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/api/public/lookup': typeof ApiPublicLookupRoute
   '/api/public/machines': typeof ApiPublicMachinesRoute
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/api-docs'
     | '/sync-logs'
+    | '/sync-progress'
     | '/api/public/lookup'
     | '/api/public/machines'
     | '/api/public/prices'
@@ -102,6 +113,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/api-docs'
     | '/sync-logs'
+    | '/sync-progress'
     | '/'
     | '/api/public/lookup'
     | '/api/public/machines'
@@ -112,6 +124,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authenticated/api-docs'
     | '/_authenticated/sync-logs'
+    | '/_authenticated/sync-progress'
     | '/_authenticated/'
     | '/api/public/lookup'
     | '/api/public/machines'
@@ -147,6 +160,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/sync-progress': {
+      id: '/_authenticated/sync-progress'
+      path: '/sync-progress'
+      fullPath: '/sync-progress'
+      preLoaderRoute: typeof AuthenticatedSyncProgressRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/sync-logs': {
@@ -190,12 +210,14 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedApiDocsRoute: typeof AuthenticatedApiDocsRoute
   AuthenticatedSyncLogsRoute: typeof AuthenticatedSyncLogsRoute
+  AuthenticatedSyncProgressRoute: typeof AuthenticatedSyncProgressRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedApiDocsRoute: AuthenticatedApiDocsRoute,
   AuthenticatedSyncLogsRoute: AuthenticatedSyncLogsRoute,
+  AuthenticatedSyncProgressRoute: AuthenticatedSyncProgressRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
 }
 
