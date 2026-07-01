@@ -98,7 +98,7 @@ export const Route = createFileRoute("/api/public/lookup")({
             // Verifica se o código existe no catálogo local
             const { data: prod } = await supabaseAdmin
               .from("products")
-              .select("id, vmpay_good_id, name, barcode, upc_code")
+              .select("id, vmpay_good_id, name, description, barcode, upc_code")
               .or(`barcode.eq.${barcode},upc_code.eq.${barcode}`)
               .limit(1);
 
