@@ -104,6 +104,64 @@ export type Database = {
         }
         Relationships: []
       }
+      price_changes: {
+        Row: {
+          change_type: string
+          created_at: string
+          id: string
+          logical_locator: string | null
+          machine_id: string
+          new_price: number | null
+          old_price: number | null
+          product_id: string
+          sync_id: string | null
+        }
+        Insert: {
+          change_type: string
+          created_at?: string
+          id?: string
+          logical_locator?: string | null
+          machine_id: string
+          new_price?: number | null
+          old_price?: number | null
+          product_id: string
+          sync_id?: string | null
+        }
+        Update: {
+          change_type?: string
+          created_at?: string
+          id?: string
+          logical_locator?: string | null
+          machine_id?: string
+          new_price?: number | null
+          old_price?: number | null
+          product_id?: string
+          sync_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "price_changes_machine_id_fkey"
+            columns: ["machine_id"]
+            isOneToOne: false
+            referencedRelation: "machines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "price_changes_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "price_changes_sync_id_fkey"
+            columns: ["sync_id"]
+            isOneToOne: false
+            referencedRelation: "sync_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           barcode: string | null

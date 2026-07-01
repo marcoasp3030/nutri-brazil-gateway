@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, redirect, Link, useNavigate } from "@tanstack/
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LogOut, BookOpen, ScrollText, Activity } from "lucide-react";
+import { LogOut, BookOpen, ScrollText, Activity, History } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
@@ -49,6 +49,12 @@ function AuthLayout() {
               <Link to="/sync-logs">
                 <ScrollText className="h-4 w-4 mr-1" />
                 Logs
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/price-changes">
+                <History className="h-4 w-4 mr-1" />
+                Alterações
               </Link>
             </Button>
 
