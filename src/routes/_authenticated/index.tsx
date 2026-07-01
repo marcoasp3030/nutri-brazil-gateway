@@ -148,6 +148,87 @@ function MachineCombobox({
   );
 }
 
+function MachineMultiSelect({
+  machines,
+  selected,
+  onChange,
+}: {
+  machines: any[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedSet = new Set(selected);
+  const items = useMemo(
+    () =>
+      machines.map((m) => {
+        const label = machineLabel(m);
+        const detail = machineDetail(m);
+        return {
+          machine: m,
+          label,
+          detail,
+          search: [label, detail, m?.asset_number, m?.vmpay_machine_id].filter(Boolean).join(" "),
+        };
+      }),
+    [machines],
+  );
+  const summary =
+    selected.length === 0
+      ? "Selecione um ou mais clientes / máquinas"
+      : `${selected.length} selecionada(s)`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" role="combobox" aria-expanded={open} className="flex-1 justify-between overflow-hidden">
+          <span className={cn("truncate", selected.length === 0 && "text-muted-foreground")}>{summary}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Digite para filtrar..." />
+          <div className="flex justify-between border-b px-2 py-1 text-xs">
+            <button className="text-primary hover:underline" onClick={() => onChange(items.map((i) => i.machine.id))}>
+              Selecionar todos
+            </button>
+            <button className="text-muted-foreground hover:underline" onClick={() => onChange([])}>
+              Limpar
+            </button>
+          </div>
+          <CommandList>
+            <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+            <CommandGroup>
+              {items.map(({ machine, label, detail, search }) => {
+                const checked = selectedSet.has(machine.id);
+                return (
+                  <CommandItem
+                    key={machine.id}
+                    value={search}
+                    onSelect={() => {
+                      const next = new Set(selectedSet);
+                      if (checked) next.delete(machine.id);
+                      else next.add(machine.id);
+                      onChange(Array.from(next));
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4", checked ? "opacity-100" : "opacity-0")} />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{label}</span>
+                      {detail && <span className="truncate text-xs text-muted-foreground">{detail}</span>}
+                    </span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Dashboard() {
   const qc = useQueryClient();
   const searchFn = useServerFn(searchPrices);
