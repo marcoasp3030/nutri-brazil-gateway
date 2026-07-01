@@ -475,3 +475,33 @@ export const getSyncStats = createServerFn({ method: "GET" })
     };
   });
 
+export const listSyncRuns = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("sync_logs")
+      .select("id, created_at, status, machines_count, products_count, prices_count, duration_ms, error_message")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error) throw new Error(error.message);
+    return { runs: data ?? [] };
+  });
+
+export const listSyncEntries = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ syncId: z.string().uuid().optional() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    let q = context.supabase
+      .from("sync_log_entries")
+      .select("id, sync_id, created_at, endpoint, page, attempt, status_code, ok, duration_ms, error_message")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (data.syncId) q = q.eq("sync_id", data.syncId);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    return { entries: rows ?? [] };
+  });
+
+
