@@ -273,8 +273,21 @@ export const syncMachineList = createServerFn({ method: "POST" })
     let machinesCount = 0;
     let productsCount = 0;
 
+    // Cria a linha de sync já no início para vincular logs detalhados
+    const { data: syncRow } = await supabaseAdmin
+      .from("sync_logs")
+      .insert({
+        user_id: userId,
+        status: "running",
+        machines_count: 0,
+        products_count: 0,
+        prices_count: 0,
+      })
+      .select("id")
+      .single();
+    currentSyncId = syncRow?.id ?? null;
+
     try {
-      // 1. Catálogo de produtos
       const products = (await vmpayFetchPaginated("/products", 200)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
@@ -296,11 +309,9 @@ export const syncMachineList = createServerFn({ method: "POST" })
         productsCount = productRows.length;
       }
 
-      // 2. Máquinas
       const machines = (await vmpayFetchPaginated("/machines", 200)) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
-      // 3. Buscar clientes + locations e mapear location_id → nome do cliente
       const clientNameById = new Map<number, string>();
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
@@ -314,9 +325,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
       try {
         const locations = (await vmpayFetchPaginated("/locations", 200)) as any[];
         if (Array.isArray(locations)) {
@@ -331,9 +340,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {
-        // /locations indisponível — fallback para place
-      }
+      } catch {}
 
       const machineRows = machines
         .filter((m) => m?.id)
@@ -359,30 +366,39 @@ export const syncMachineList = createServerFn({ method: "POST" })
       if (mErr) throw new Error(`upsert machines: ${mErr.message}`);
       machinesCount = machineRows.length;
 
-      await supabaseAdmin.from("sync_logs").insert({
-        user_id: userId,
-        status: "success",
-        machines_count: machinesCount,
-        products_count: productsCount,
-        prices_count: 0,
-        duration_ms: Date.now() - startedAt,
-      });
+      if (currentSyncId) {
+        await supabaseAdmin
+          .from("sync_logs")
+          .update({
+            status: "success",
+            machines_count: machinesCount,
+            products_count: productsCount,
+            duration_ms: Date.now() - startedAt,
+          })
+          .eq("id", currentSyncId);
+      }
 
       return { success: true, machinesCount, productsCount, durationMs: Date.now() - startedAt };
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      await supabaseAdmin.from("sync_logs").insert({
-        user_id: userId,
-        status: "error",
-        machines_count: machinesCount,
-        products_count: productsCount,
-        prices_count: 0,
-        error_message: message.slice(0, 1000),
-        duration_ms: Date.now() - startedAt,
-      });
+      if (currentSyncId) {
+        await supabaseAdmin
+          .from("sync_logs")
+          .update({
+            status: "error",
+            machines_count: machinesCount,
+            products_count: productsCount,
+            error_message: message.slice(0, 1000),
+            duration_ms: Date.now() - startedAt,
+          })
+          .eq("id", currentSyncId);
+      }
       throw new Error(message);
+    } finally {
+      currentSyncId = null;
     }
   });
+
 
 // ===== SYNC planograma de UMA máquina (teste) =====
 export const syncMachinePlanogram = createServerFn({ method: "POST" })
