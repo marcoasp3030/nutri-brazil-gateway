@@ -560,6 +560,61 @@ export const listSyncRuns = createServerFn({ method: "GET" })
     return { runs: data ?? [] };
   });
 
+export const getSyncProgress = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ syncId: z.string().uuid().optional() }).parse(input ?? {}))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    let run: any = null;
+    if (data.syncId) {
+      const { data: r } = await supabase.from("sync_logs").select("*").eq("id", data.syncId).maybeSingle();
+      run = r;
+    } else {
+      const { data: r } = await supabase.from("sync_logs").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
+      run = r;
+    }
+    if (!run) return { run: null, stats: [], stale: false, lastEntryAt: null };
+
+    const { data: entries } = await supabase
+      .from("sync_log_entries")
+      .select("endpoint, page, ok, duration_ms, status_code, error_message, created_at")
+      .eq("sync_id", run.id)
+      .order("created_at", { ascending: false })
+      .limit(2000);
+
+    const byEndpoint = new Map<string, { endpoint: string; requests: number; ok: number; errors: number; pages: Set<number>; totalMs: number; maxMs: number; lastError: string | null; lastAt: string | null }>();
+    let lastEntryAt: string | null = null;
+    for (const e of entries ?? []) {
+      if (!lastEntryAt || (e.created_at && e.created_at > lastEntryAt)) lastEntryAt = e.created_at;
+      const s = byEndpoint.get(e.endpoint) ?? { endpoint: e.endpoint, requests: 0, ok: 0, errors: 0, pages: new Set<number>(), totalMs: 0, maxMs: 0, lastError: null, lastAt: null };
+      s.requests += 1;
+      if (e.ok) s.ok += 1; else { s.errors += 1; if (!s.lastError && e.error_message) s.lastError = e.error_message; }
+      if (e.page != null) s.pages.add(e.page);
+      s.totalMs += e.duration_ms ?? 0;
+      s.maxMs = Math.max(s.maxMs, e.duration_ms ?? 0);
+      if (!s.lastAt || (e.created_at && e.created_at > s.lastAt)) s.lastAt = e.created_at;
+      byEndpoint.set(e.endpoint, s);
+    }
+
+    const stats = Array.from(byEndpoint.values()).map((s) => ({
+      endpoint: s.endpoint,
+      requests: s.requests,
+      ok: s.ok,
+      errors: s.errors,
+      pages_count: s.pages.size,
+      max_page: s.pages.size ? Math.max(...s.pages) : null,
+      avg_ms: s.requests ? Math.round(s.totalMs / s.requests) : 0,
+      max_ms: s.maxMs,
+      last_error: s.lastError,
+      last_at: s.lastAt,
+    })).sort((a, b) => a.endpoint.localeCompare(b.endpoint));
+
+    // Considera "stale" se está "running" e sem novos logs há > 90s
+    const stale = run.status === "running" && lastEntryAt != null && (Date.now() - new Date(lastEntryAt).getTime()) > 90_000;
+
+    return { run, stats, stale, lastEntryAt };
+  });
+
 export const listSyncEntries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
