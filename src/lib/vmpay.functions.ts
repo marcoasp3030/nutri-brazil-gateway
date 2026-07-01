@@ -256,7 +256,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
       try {
-        const clients = (await vmpayFetch("/clients?per_page=1000")) as any[];
+        const clients = (await vmpayFetchPaginated("/clients", 200)) as any[];
         if (Array.isArray(clients)) {
           for (const c of clients) {
             if (c?.id != null) {
