@@ -21,33 +21,78 @@ function getMachineLabel(machine: any) {
   );
 }
 
-async function vmpayFetch(path: string, opts: { retries?: number; timeoutMs?: number } = {}) {
+// Contexto de sync corrente (setado no início de cada sync) para vincular logs detalhados
+let currentSyncId: string | null = null;
+
+async function logEntry(entry: {
+  endpoint: string;
+  page?: number | null;
+  attempt: number;
+  status_code?: number | null;
+  ok: boolean;
+  duration_ms: number;
+  error_message?: string | null;
+}) {
+  try {
+    await supabaseAdmin.from("sync_log_entries").insert({
+      sync_id: currentSyncId,
+      endpoint: entry.endpoint,
+      page: entry.page ?? null,
+      attempt: entry.attempt,
+      status_code: entry.status_code ?? null,
+      ok: entry.ok,
+      duration_ms: entry.duration_ms,
+      error_message: entry.error_message ?? null,
+    });
+  } catch {
+    // não deixa falha de log quebrar a sync
+  }
+}
+
+async function vmpayFetch(
+  path: string,
+  opts: { retries?: number; timeoutMs?: number; logEndpoint?: string; page?: number | null } = {},
+) {
   const apiKey = process.env.VMPAY_API_KEY;
   if (!apiKey) throw new Error("VMPAY_API_KEY não configurada");
   const sep = path.includes("?") ? "&" : "?";
   const url = `${VMPAY_BASE}${path}${sep}access_token=${encodeURIComponent(apiKey)}`;
   const retries = opts.retries ?? 3;
   const timeoutMs = opts.timeoutMs ?? 60000;
+  const endpointLabel = opts.logEndpoint ?? path.split("?")[0];
   let lastErr: any;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const start = Date.now();
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
       clearTimeout(t);
-      if (res.ok) return res.json();
-      // Retry on gateway/timeouts
-      if ([408, 429, 500, 502, 503, 504, 520, 522, 524].includes(res.status) && attempt < retries) {
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-        continue;
+      const dur = Date.now() - start;
+      if (res.ok) {
+        await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: true, duration_ms: dur });
+        return res.json();
       }
       const text = await res.text().catch(() => "");
+      const errMsg = `HTTP ${res.status} ${text.slice(0, 200)}`;
+      await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, status_code: res.status, ok: false, duration_ms: dur, error_message: errMsg });
+      if ([408, 429, 500, 502, 503, 504, 520, 522, 524].includes(res.status) && attempt <= retries) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+        continue;
+      }
       throw new Error(`VMPay ${path} → ${res.status} ${text.slice(0, 200)}`);
     } catch (e: any) {
       clearTimeout(t);
+      const dur = Date.now() - start;
       lastErr = e;
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      const isAbort = e?.name === "AbortError";
+      const msg = isAbort ? `timeout ${timeoutMs}ms` : e?.message ?? String(e);
+      // se já logamos HTTP acima, não duplica
+      if (isAbort || !(e?.message ?? "").startsWith("VMPay ")) {
+        await logEntry({ endpoint: endpointLabel, page: opts.page ?? null, attempt, ok: false, duration_ms: dur, error_message: msg });
+      }
+      if (attempt <= retries) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
         continue;
       }
       throw e;
@@ -60,13 +105,17 @@ async function vmpayFetchPaginated(basePath: string, perPage = 200): Promise<any
   const all: any[] = [];
   for (let page = 1; page <= 50; page++) {
     const sep = basePath.includes("?") ? "&" : "?";
-    const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`)) as any[];
+    const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
+      logEndpoint: basePath,
+      page,
+    })) as any[];
     if (!Array.isArray(batch) || batch.length === 0) break;
     all.push(...batch);
     if (batch.length < perPage) break;
   }
   return all;
 }
+
 
 
 // ===== SEARCH (autenticado) =====
@@ -224,8 +273,21 @@ export const syncMachineList = createServerFn({ method: "POST" })
     let machinesCount = 0;
     let productsCount = 0;
 
+    // Cria a linha de sync já no início para vincular logs detalhados
+    const { data: syncRow } = await supabaseAdmin
+      .from("sync_logs")
+      .insert({
+        user_id: userId,
+        status: "running",
+        machines_count: 0,
+        products_count: 0,
+        prices_count: 0,
+      })
+      .select("id")
+      .single();
+    currentSyncId = syncRow?.id ?? null;
+
     try {
-      // 1. Catálogo de produtos
       const products = (await vmpayFetchPaginated("/products", 200)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
@@ -247,11 +309,9 @@ export const syncMachineList = createServerFn({ method: "POST" })
         productsCount = productRows.length;
       }
 
-      // 2. Máquinas
       const machines = (await vmpayFetchPaginated("/machines", 200)) as any[];
       if (!Array.isArray(machines)) throw new Error("Retorno /machines inválido");
 
-      // 3. Buscar clientes + locations e mapear location_id → nome do cliente
       const clientNameById = new Map<number, string>();
       const clientNameByLocationId = new Map<number, string>();
       const locationNameById = new Map<number, string>();
@@ -265,9 +325,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
       try {
         const locations = (await vmpayFetchPaginated("/locations", 200)) as any[];
         if (Array.isArray(locations)) {
@@ -282,9 +340,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
             }
           }
         }
-      } catch {
-        // /locations indisponível — fallback para place
-      }
+      } catch {}
 
       const machineRows = machines
         .filter((m) => m?.id)
@@ -310,30 +366,39 @@ export const syncMachineList = createServerFn({ method: "POST" })
       if (mErr) throw new Error(`upsert machines: ${mErr.message}`);
       machinesCount = machineRows.length;
 
-      await supabaseAdmin.from("sync_logs").insert({
-        user_id: userId,
-        status: "success",
-        machines_count: machinesCount,
-        products_count: productsCount,
-        prices_count: 0,
-        duration_ms: Date.now() - startedAt,
-      });
+      if (currentSyncId) {
+        await supabaseAdmin
+          .from("sync_logs")
+          .update({
+            status: "success",
+            machines_count: machinesCount,
+            products_count: productsCount,
+            duration_ms: Date.now() - startedAt,
+          })
+          .eq("id", currentSyncId);
+      }
 
       return { success: true, machinesCount, productsCount, durationMs: Date.now() - startedAt };
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      await supabaseAdmin.from("sync_logs").insert({
-        user_id: userId,
-        status: "error",
-        machines_count: machinesCount,
-        products_count: productsCount,
-        prices_count: 0,
-        error_message: message.slice(0, 1000),
-        duration_ms: Date.now() - startedAt,
-      });
+      if (currentSyncId) {
+        await supabaseAdmin
+          .from("sync_logs")
+          .update({
+            status: "error",
+            machines_count: machinesCount,
+            products_count: productsCount,
+            error_message: message.slice(0, 1000),
+            duration_ms: Date.now() - startedAt,
+          })
+          .eq("id", currentSyncId);
+      }
       throw new Error(message);
+    } finally {
+      currentSyncId = null;
     }
   });
+
 
 // ===== SYNC planograma de UMA máquina (teste) =====
 export const syncMachinePlanogram = createServerFn({ method: "POST" })
@@ -409,4 +474,34 @@ export const getSyncStats = createServerFn({ method: "GET" })
       lastSync: lastLog.data ?? null,
     };
   });
+
+export const listSyncRuns = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("sync_logs")
+      .select("id, created_at, status, machines_count, products_count, prices_count, duration_ms, error_message")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error) throw new Error(error.message);
+    return { runs: data ?? [] };
+  });
+
+export const listSyncEntries = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ syncId: z.string().uuid().optional() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    let q = context.supabase
+      .from("sync_log_entries")
+      .select("id, sync_id, created_at, endpoint, page, attempt, status_code, ok, duration_ms, error_message")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (data.syncId) q = q.eq("sync_id", data.syncId);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    return { entries: rows ?? [] };
+  });
+
 

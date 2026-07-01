@@ -146,6 +146,53 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_log_entries: {
+        Row: {
+          attempt: number
+          created_at: string
+          duration_ms: number | null
+          endpoint: string
+          error_message: string | null
+          id: string
+          ok: boolean
+          page: number | null
+          status_code: number | null
+          sync_id: string | null
+        }
+        Insert: {
+          attempt?: number
+          created_at?: string
+          duration_ms?: number | null
+          endpoint: string
+          error_message?: string | null
+          id?: string
+          ok?: boolean
+          page?: number | null
+          status_code?: number | null
+          sync_id?: string | null
+        }
+        Update: {
+          attempt?: number
+          created_at?: string
+          duration_ms?: number | null
+          endpoint?: string
+          error_message?: string | null
+          id?: string
+          ok?: boolean
+          page?: number | null
+          status_code?: number | null
+          sync_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sync_log_entries_sync_id_fkey"
+            columns: ["sync_id"]
+            isOneToOne: false
+            referencedRelation: "sync_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sync_logs: {
         Row: {
           created_at: string
