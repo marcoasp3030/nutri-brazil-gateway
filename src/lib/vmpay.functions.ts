@@ -349,13 +349,14 @@ export const syncMachineList = createServerFn({ method: "POST" })
           const locNum = locId != null ? Number(locId) : null;
           const locationName = locNum != null ? locationNameById.get(locNum) ?? null : null;
           const clientName = locNum != null ? clientNameByLocationId.get(locNum) ?? null : null;
+          const installationPlace = firstText(m.installation?.place);
           return {
             vmpay_machine_id: m.id,
             asset_number: m.asset_number ?? null,
             installation_id: m.installation?.id ?? null,
             location_id: locId,
-            location_name: clientName ?? locationName,
-            place: locationName ?? firstText(m.installation?.place),
+            location_name: clientName ?? locationName ?? installationPlace,
+            place: locationName ?? installationPlace,
             tags: m.tags ?? null,
           };
         });
