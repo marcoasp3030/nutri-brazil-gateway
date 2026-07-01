@@ -101,9 +101,9 @@ async function vmpayFetch(
   throw lastErr;
 }
 
-async function vmpayFetchPaginated(basePath: string, perPage = 200): Promise<any[]> {
+async function vmpayFetchPaginated(basePath: string, perPage = 100, maxPages = 200): Promise<any[]> {
   const all: any[] = [];
-  for (let page = 1; page <= 50; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const sep = basePath.includes("?") ? "&" : "?";
     const batch = (await vmpayFetch(`${basePath}${sep}per_page=${perPage}&page=${page}`, {
       logEndpoint: basePath,
@@ -288,7 +288,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
     currentSyncId = syncRow?.id ?? null;
 
     try {
-      const products = (await vmpayFetchPaginated("/products", 200)) as any[];
+      const products = (await vmpayFetchPaginated("/products", 50)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
           .filter((p) => p?.id)
