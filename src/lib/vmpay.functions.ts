@@ -226,7 +226,7 @@ export const syncMachineList = createServerFn({ method: "POST" })
 
     try {
       // 1. Catálogo de produtos
-      const products = (await vmpayFetch("/products")) as any[];
+      const products = (await vmpayFetchPaginated("/products", 200)) as any[];
       if (Array.isArray(products) && products.length > 0) {
         const productRows = products
           .filter((p) => p?.id)
