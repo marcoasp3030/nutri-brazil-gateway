@@ -205,7 +205,8 @@ export const listMachines = createServerFn({ method: "GET" })
       .select("id, asset_number, place, location_name, vmpay_machine_id, installation_id")
       .order("location_name", { nullsFirst: false })
       .order("place", { nullsFirst: false })
-      .order("asset_number", { nullsFirst: false });
+      .order("asset_number", { nullsFirst: false })
+      .range(0, 4999);
     if (error) throw new Error(error.message);
     return {
       machines: (data ?? []).map((machine) => ({
