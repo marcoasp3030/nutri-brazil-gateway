@@ -407,6 +407,68 @@ function Dashboard() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Sincronizar preços em lote</CardTitle>
+          <CardDescription>
+            Selecione quais clientes/máquinas devem ter os preços atualizados de uma vez para pré-aquecer o cache.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row">
+            <MachineMultiSelect
+              machines={machines.data?.machines ?? []}
+              selected={bulkSelected}
+              onChange={setBulkSelected}
+            />
+            <Button
+              onClick={async () => {
+                if (bulkSelected.length === 0) return;
+                setBulkProgress({ done: 0, total: bulkSelected.length });
+                let ok = 0;
+                let fail = 0;
+                for (let i = 0; i < bulkSelected.length; i++) {
+                  const id = bulkSelected[i];
+                  const m = (machines.data?.machines ?? []).find((x: any) => x.id === id);
+                  setBulkProgress({ done: i, total: bulkSelected.length, current: m ? machineLabel(m) : undefined });
+                  try {
+                    await syncPlanFn({ data: { machineId: id } });
+                    ok++;
+                  } catch (e: any) {
+                    fail++;
+                    toast.error(`${m ? machineLabel(m) : id}: ${e?.message ?? "falha"}`);
+                  }
+                }
+                setBulkProgress({ done: bulkSelected.length, total: bulkSelected.length });
+                toast.success(`Concluído: ${ok} sucesso(s), ${fail} falha(s)`);
+                qc.invalidateQueries();
+                setTimeout(() => setBulkProgress(null), 4000);
+              }}
+              disabled={bulkSelected.length === 0 || (bulkProgress != null && bulkProgress.done < bulkProgress.total)}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${bulkProgress && bulkProgress.done < bulkProgress.total ? "animate-spin" : ""}`} />
+              {bulkProgress && bulkProgress.done < bulkProgress.total
+                ? `Sincronizando ${bulkProgress.done + 1}/${bulkProgress.total}…`
+                : `Sincronizar ${bulkSelected.length || ""} selecionada(s)`}
+            </Button>
+          </div>
+          {bulkProgress && (
+            <div className="space-y-1 text-sm">
+              <div className="h-2 w-full overflow-hidden rounded bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {bulkProgress.done}/{bulkProgress.total}
+                {bulkProgress.current && bulkProgress.done < bulkProgress.total ? ` — ${bulkProgress.current}` : ""}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Consulta de preços</CardTitle>
           <CardDescription>
             Busque por nome do produto ou código de barras. Filtre pelo cliente se desejar.
