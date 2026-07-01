@@ -201,6 +201,9 @@ export type Database = {
           id: string
           machines_count: number | null
           prices_count: number | null
+          prices_inserted: number | null
+          prices_skipped: number | null
+          prices_updated: number | null
           products_count: number | null
           status: string
           user_id: string | null
@@ -212,6 +215,9 @@ export type Database = {
           id?: string
           machines_count?: number | null
           prices_count?: number | null
+          prices_inserted?: number | null
+          prices_skipped?: number | null
+          prices_updated?: number | null
           products_count?: number | null
           status: string
           user_id?: string | null
@@ -223,6 +229,9 @@ export type Database = {
           id?: string
           machines_count?: number | null
           prices_count?: number | null
+          prices_inserted?: number | null
+          prices_skipped?: number | null
+          prices_updated?: number | null
           products_count?: number | null
           status?: string
           user_id?: string | null
