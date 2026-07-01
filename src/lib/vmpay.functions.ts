@@ -372,8 +372,9 @@ export const syncMachineList = createServerFn({ method: "POST" })
 
     const updateProgress = async (patch: Record<string, any>) => {
       if (!syncId) return;
-      await supabaseAdmin.from("sync_logs").update(patch).eq("id", syncId);
+      await (supabaseAdmin.from("sync_logs") as any).update(patch).eq("id", syncId);
     };
+
 
     try {
       // Fase 1: /machines + /clients em paralelo (rápidos e essenciais)
