@@ -552,13 +552,29 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
         { logEndpoint: "/machines/:id/installations/:id/current_planogram", syncId },
       );
 
-      const { data: productMap } = await supabaseAdmin
-        .from("products")
-        .select("id, vmpay_good_id");
-      const productByGoodId = new Map<number, string>();
-      productMap?.forEach((p: any) => productByGoodId.set(Number(p.vmpay_good_id), p.id));
-
       const items: any[] = planogram?.items ?? [];
+      const goodIds = Array.from(
+        new Set(
+          items
+            .map((it) => Number(it?.good_id))
+            .filter((n) => Number.isFinite(n) && n > 0),
+        ),
+      );
+      const productByGoodId = new Map<number, string>();
+      // .in() aceita centenas de valores; busca apenas os produtos que aparecem no planograma
+      // (evita o limite implícito de 1000 linhas do SELECT sem filtro)
+      const CHUNK = 500;
+      for (let i = 0; i < goodIds.length; i += CHUNK) {
+        const slice = goodIds.slice(i, i + CHUNK);
+        const { data: prods } = await supabaseAdmin
+          .from("products")
+          .select("id, vmpay_good_id")
+          .in("vmpay_good_id", slice);
+        (prods ?? []).forEach((p: any) => productByGoodId.set(Number(p.vmpay_good_id), p.id));
+      }
+
+      const missingGoodIds = goodIds.filter((g) => !productByGoodId.has(g));
+
       const newRows = items
         .filter((it) => it?.good_id && productByGoodId.has(Number(it.good_id)))
         .map((it) => ({
