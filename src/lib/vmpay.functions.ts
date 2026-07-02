@@ -657,7 +657,14 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
           prices_inserted: inserted,
           prices_updated: updated,
           prices_skipped: skipped,
-          error_message: removed > 0 ? `${removed} preço(s) removido(s) do planograma` : null,
+          error_message: [
+            removed > 0 ? `${removed} preço(s) removido(s) do planograma` : null,
+            missingGoodIds.length > 0
+              ? `${missingGoodIds.length} item(ns) ignorados por não estarem no catálogo local (rode "Atualizar lista")`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || null,
           duration_ms: Date.now() - startedAt,
         })
         .eq("id", syncId);
@@ -670,6 +677,7 @@ export const syncMachinePlanogram = createServerFn({ method: "POST" })
         updated,
         skipped,
         removed,
+        missingCatalog: missingGoodIds.length,
         machineLabel: getMachineLabel(machine),
       };
     } catch (err: any) {
